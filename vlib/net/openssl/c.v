@@ -11,8 +11,14 @@ $if $pkgconfig('openssl') {
 	#pkgconfig openssl
 }
 
-#flag windows -l libssl -l libcrypto
-#flag -lssl -lcrypto
+$if !gcc && windows {
+	#flag -I@VEXEROOT/thirdparty/openssl/include
+	#flag -L@VEXEROOT/thirdparty/openssl/lib
+    #flag -l libssl -l libcrypto
+}
+$else {
+	#flag -lssl -lcrypto
+}
 #flag linux -ldl -lpthread
 // MacPorts
 #flag darwin -I/opt/local/include
