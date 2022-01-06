@@ -379,7 +379,7 @@ interface DbInterface {
 // run_app
 [manualfree]
 pub fn run<T>(global_app &T, port int) {
-	mut l := net.listen_tcp(.ip6, ':$port') or { panic('failed to listen $err.code $err') }
+	mut l := net.listen_tcp(.ip, ':$port') or { panic('failed to listen $err.code $err') }
 
 	// Parsing methods attributes
 	mut routes := map[string]Route{}
