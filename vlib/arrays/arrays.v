@@ -6,9 +6,11 @@ module arrays
 // - merge - combine two sorted arrays and maintain sorted order
 // - chunk - chunk array to arrays with n elements
 // - window - get snapshots of the window of the given size sliding along array with the given step, where each snapshot is an array
-// - zip - concat two arrays into one map
+// - group - merge two arrays by interleaving e.g. arrays.group([1,3,5], [2,4,6]) => [[1,2],[3,4],[5,6]]
+// - flatten - reduce dimensionality of array by one. e.g. arrays.flatten([[1,2],[3,4],[5,6]]) => [1,2,3,4,5,6]
 
 // min returns the minimum value in the array
+// Example: arrays.min([1,2,3,0,9]) // => 0
 pub fn min<T>(a []T) ?T {
 	if a.len == 0 {
 		return error('.min called on an empty array')
@@ -23,6 +25,7 @@ pub fn min<T>(a []T) ?T {
 }
 
 // max returns the maximum the maximum value in the array
+// Example: arrays.max([1,2,3,0,9]) // => 9
 pub fn max<T>(a []T) ?T {
 	if a.len == 0 {
 		return error('.max called on an empty array')
@@ -37,6 +40,7 @@ pub fn max<T>(a []T) ?T {
 }
 
 // idx_min returns the index of the minimum value in the array
+// Example: arrays.idx_min([1,2,3,0,9]) // => 3
 pub fn idx_min<T>(a []T) ?int {
 	if a.len == 0 {
 		return error('.idx_min called on an empty array')
@@ -53,6 +57,7 @@ pub fn idx_min<T>(a []T) ?int {
 }
 
 // idx_max returns the index of the maximum value in the array
+// Example: arrays.idx_max([1,2,3,0,9]) // => 4
 pub fn idx_max<T>(a []T) ?int {
 	if a.len == 0 {
 		return error('.idx_max called on an empty array')
@@ -69,6 +74,7 @@ pub fn idx_max<T>(a []T) ?int {
 }
 
 // merge two sorted arrays (ascending) and maintain sorted order
+// Example: arrays.merge([1,3,5,7], [2,4,6,8]) // => [1,2,3,4,5,6,7,8]
 [direct_array_access]
 pub fn merge<T>(a []T, b []T) []T {
 	mut m := []T{len: a.len + b.len}
@@ -102,6 +108,12 @@ pub fn merge<T>(a []T, b []T) []T {
 }
 
 // group n arrays into a single array of arrays with n elements
+//
+// This function is analogous to the "zip" function of other languages.
+// To fully interleave two arrays, follow this function with a call to `flatten`.
+//
+// NOTE: An error will be generated if the type annotation is omitted.
+// Example: arrays.group<int>([1,2,3],[4,5,6]) // => [[1, 4], [2, 5], [3, 6]]
 pub fn group<T>(lists ...[]T) [][]T {
 	mut length := if lists.len > 0 { lists[0].len } else { 0 }
 	// calculate length of output by finding shortest input array
@@ -115,12 +127,12 @@ pub fn group<T>(lists ...[]T) [][]T {
 		mut arr := [][]T{cap: length}
 		// append all combined arrays into the resultant array
 		for ndx in 0 .. length {
-			mut zipped := []T{cap: lists.len}
+			mut grouped := []T{cap: lists.len}
 			// combine each list item for the ndx position into one array
 			for list_ndx in 0 .. lists.len {
-				zipped << lists[list_ndx][ndx]
+				grouped << lists[list_ndx][ndx]
 			}
-			arr << zipped
+			arr << grouped
 		}
 		return arr
 	}
@@ -128,8 +140,8 @@ pub fn group<T>(lists ...[]T) [][]T {
 	return [][]T{}
 }
 
-// chunk array to arrays with n elements
-// example: arrays.chunk([1, 2, 3], 2) => [[1, 2], [3]]
+// chunk array into a single array of arrays where each element is the next `size` elements of the original
+// Example: arrays.chunk([1, 2, 3, 4, 5, 6, 7, 8, 9], 2)) // => [[1, 2], [3, 4], [5, 6], [7, 8], [9]]
 pub fn chunk<T>(list []T, size int) [][]T {
 	// allocate chunk array
 	mut chunks := [][]T{cap: list.len / size + if list.len % size == 0 { 0 } else { 1 }}
@@ -163,8 +175,8 @@ pub struct WindowAttribute {
 // - `size` - snapshot size
 // - `step` - gap size between each snapshot, default is 1.
 //
-// example A: `arrays.window([1, 2, 3, 4], size: 2)` => `[[1, 2], [2, 3], [3, 4]]`
-// example B: `arrays.window([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], size: 3, step: 2)` => `[[1, 2, 3], [3, 4, 5], [5, 6, 7], [7, 8, 9]]`
+// Example: arrays.window([1, 2, 3, 4], size: 2) => [[1, 2], [2, 3], [3, 4]]
+// Example: arrays.window([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], size: 3, step: 2) // => [[1, 2, 3], [3, 4, 5], [5, 6, 7], [7, 8, 9]]
 pub fn window<T>(list []T, attr WindowAttribute) [][]T {
 	// allocate snapshot array
 	mut windows := [][]T{cap: list.len - attr.size + 1}
@@ -183,10 +195,11 @@ pub fn window<T>(list []T, attr WindowAttribute) [][]T {
 }
 
 // sum up array, return nothing when array has no elements
-// NOTICE: currently V has bug that cannot make sum function takes custom struct with + operator overloaded.
+//
+// NOTICE: currently V has bug that cannot make sum function takes custom struct with + operator overloaded
 // which means you can only pass array of numbers for now.
-// Future work: Fix generic operator overloading detection issue.
-// usage: `arrays.sum<int>([1, 2, 3, 4, 5])?` => `15`
+// TODO: Fix generic operator overloading detection issue.
+// Example: arrays.sum<int>([1, 2, 3, 4, 5])? // => 15
 pub fn sum<T>(list []T) ?T {
 	if list.len == 0 {
 		return error('Cannot sum up array of nothing.')
@@ -206,8 +219,8 @@ pub fn sum<T>(list []T) ?T {
 }
 
 // accumulates values with the first element and applying providing operation to current accumulator value and each elements.
-// if the array is empty, then returns error.
-// usage: `arrays.reduce([1, 2, 3, 4, 5], fn (t1 int, t2 int) int { return t1 * t2 })?` => `120`
+// If the array is empty, then returns error.
+// Example: arrays.reduce([1, 2, 3, 4, 5], fn (t1 int, t2 int) int { return t1 * t2 })? // => 120
 pub fn reduce<T>(list []T, reduce_op fn (t1 T, t2 T) T) ?T {
 	if list.len == 0 {
 		return error('Cannot reduce array of nothing.')
@@ -227,7 +240,7 @@ pub fn reduce<T>(list []T, reduce_op fn (t1 T, t2 T) T) ?T {
 }
 
 // accumulates values with providing initial value and applying providing operation to current accumulator value and each elements.
-// usage: `arrays.fold<string, byte>(['H', 'e', 'l', 'l', 'o'], 0, fn (r int, t string) int { return r + t[0] })` => `149`
+// Example: arrays.fold<string, byte>(['H', 'e', 'l', 'l', 'o'], 0, fn (r int, t string) int { return r + t[0] }) // => 149
 pub fn fold<T, R>(list []T, init R, fold_op fn (r R, t T) R) R {
 	mut value := init
 
@@ -239,7 +252,7 @@ pub fn fold<T, R>(list []T, init R, fold_op fn (r R, t T) R) R {
 }
 
 // flattens n + 1 dimensional array into n dimensional array
-// usage: `arrays.flatten<int>([[1, 2, 3], [4, 5]])` => `[1, 2, 3, 4, 5]`
+// Example: arrays.flatten<int>([[1, 2, 3], [4, 5]]) // => [1, 2, 3, 4, 5]
 pub fn flatten<T>(list [][]T) []T {
 	// calculate required capacity
 	mut required_size := 0
@@ -263,7 +276,7 @@ pub fn flatten<T>(list [][]T) []T {
 }
 
 // grouping list of elements with given key selector.
-// usage: `arrays.assort<int, string>(['H', 'el', 'lo'], fn (v string) int { return v.len })` => `{1: ['H'], 2: ['el', 'lo']}`
+// Example: arrays.group_by<int, string>(['H', 'el', 'lo'], fn (v string) int { return v.len }) // => {1: ['H'], 2: ['el', 'lo']}
 pub fn group_by<K, V>(list []V, grouping_op fn (v V) K) map[K][]V {
 	mut result := map[K][]V{}
 
@@ -281,7 +294,13 @@ pub fn group_by<K, V>(list []V, grouping_op fn (v V) K) map[K][]V {
 	return result
 }
 
-// concatenate two arrays
+// concatenate an array with an arbitrary number of additional values
+//
+// NOTE: if you have two arrays, you should simply use the `<<` operator directly
+// Example: arrays.concat([1, 2, 3], 4, 5, 6) == [1, 2, 3, 4, 5, 6] // => true
+// Example: arrays.concat([1, 2, 3], ...[4, 5, 6]) == [1, 2, 3, 4, 5, 6] // => true
+// Example: arr << [4, 5, 6] // does what you need if arr is mutable
+[deprecated]
 pub fn concat<T>(a []T, b ...T) []T {
 	mut m := []T{cap: a.len + b.len}
 
@@ -292,6 +311,7 @@ pub fn concat<T>(a []T, b ...T) []T {
 }
 
 // returns the smallest element >= val, requires `arr` to be sorted
+// Example: arrays.lower_bound([2, 4, 6, 8], 3)? // => 4
 pub fn lower_bound<T>(arr []T, val T) ?T {
 	if arr.len == 0 {
 		return error('.lower_bound called on an empty array')
@@ -314,6 +334,7 @@ pub fn lower_bound<T>(arr []T, val T) ?T {
 }
 
 // returns the largest element <= val, requires `arr` to be sorted
+// Example: arrays.upper_bound([2, 4, 6, 8], 3)? // => 2
 pub fn upper_bound<T>(arr []T, val T) ?T {
 	if arr.len == 0 {
 		return error('.upper_bound called on an empty array')
@@ -335,7 +356,10 @@ pub fn upper_bound<T>(arr []T, val T) ?T {
 	}
 }
 
-// binary search, requires `arr` to be sorted, returns index
+// binary search, requires `arr` to be sorted, returns index of found item or error.
+// Binary searches on sorted lists can be faster than other array searches because at maximum
+// the algorithm only has to traverse log N elements
+// Example: arrays.binary_search([1, 2, 3, 4], 4) ? // => 3
 pub fn binary_search<T>(arr []T, target T) ?int {
 	mut left := 0
 	mut right := arr.len - 1

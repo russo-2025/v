@@ -44,6 +44,34 @@ import os
 const (
 	auto_complete_shells = ['bash', 'fish', 'zsh', 'powershell'] // list of supported shells
 	vexe                 = os.getenv('VEXE')
+	help_text            = "Usage:
+  v complete [options] [SUBCMD] QUERY...
+
+Description:
+  Tool for bridging auto completion between various shells and v
+
+Supported shells:
+  bash, fish, zsh, powershell
+
+Examples:
+  Echo auto-detected shell install script to STDOUT
+    v complete
+  Echo specific shell install script to STDOUT
+    v complete setup bash
+  Auto complete input `v tes`*USER PUSHES TAB* (in Bash compatible format).
+  This is not meant for manual invocation - it's called by the relevant
+  shell via the script installed with `v complete` or `v complete setup SHELL`.
+    v complete bash v tes
+
+Options:
+  -h, --help                Show this help text.
+
+SUBCMD:
+  setup     : setup [SHELL] - returns the code for completion setup for SHELL
+  bash      : [QUERY]       - returns Bash compatible completion code with completions computed from QUERY
+  fish      : [QUERY]       - returns Fish compatible completion code with completions computed from QUERY
+  zsh       : [QUERY]       - returns ZSH  compatible completion code with completions computed from QUERY
+  powershell: [QUERY]       - returns PowerShell compatible completion code with completions computed from QUERY"
 )
 
 // Snooped from cmd/v/v.v, vlib/v/pref/pref.v
@@ -229,6 +257,16 @@ const (
 fn auto_complete(args []string) {
 	if args.len <= 1 || args[0] != 'complete' {
 		if args.len == 1 {
+			shell_path := os.getenv('SHELL')
+			if shell_path.len > 0 {
+				shell_name := os.file_name(shell_path).to_lower()
+				if shell_name in auto_complete_shells {
+					println(setup_for_shell(shell_name))
+					exit(0)
+				}
+				eprintln('Unknown shell ${shell_name}. Supported shells are: $auto_complete_shells')
+				exit(1)
+			}
 			eprintln('auto completion require arguments to work.')
 		} else {
 			eprintln('auto completion failed for "$args".')
@@ -244,62 +282,7 @@ fn auto_complete(args []string) {
 				exit(1)
 			}
 			shell := sub_args[1]
-			mut setup := ''
-			match shell {
-				'bash' {
-					setup = '
-_v_completions() {
-	local src
-	local limit
-	# Send all words up to the word the cursor is currently on
-	let limit=1+\$COMP_CWORD
-	src=\$($vexe complete bash \$(printf "%s\\n" \${COMP_WORDS[@]: 0:\$limit}))
-	if [[ \$? == 0 ]]; then
-		eval \${src}
-		#echo \${src}
-	fi
-}
-
-complete -o nospace -F _v_completions v
-'
-				}
-				'fish' {
-					setup = '
-function __v_completions
-	# Send all words up to the one before the cursor
-	$vexe complete fish (commandline -cop)
-end
-complete -f -c v -a "(__v_completions)"
-'
-				}
-				'zsh' {
-					setup = '
-#compdef v
-_v() {
-	local src
-	# Send all words up to the word the cursor is currently on
-	src=\$($vexe complete zsh \$(printf "%s\\n" \${(@)words[1,\$CURRENT]}))
-	if [[ \$? == 0 ]]; then
-		eval \${src}
-		#echo \${src}
-	fi
-}
-compdef _v v
-'
-				}
-				'powershell' {
-					setup = '
-Register-ArgumentCompleter -Native -CommandName v -ScriptBlock {
-	param(\$commandName, \$wordToComplete, \$cursorPosition)
-		$vexe complete powershell "\$wordToComplete" | ForEach-Object {
-			[System.Management.Automation.CompletionResult]::new(\$_, \$_, \'ParameterValue\', \$_)
-		}
-}
-'
-				}
-				else {}
-			}
-			println(setup)
+			println(setup_for_shell(shell))
 		}
 		'bash' {
 			if sub_args.len <= 1 {
@@ -333,6 +316,9 @@ Register-ArgumentCompleter -Native -CommandName v -ScriptBlock {
 				lines << 'compadd -U -S' + '""' + ' -- ' + "'$entry';"
 			}
 			println(lines.join('\n'))
+		}
+		'-h', '--help' {
+			println(help_text)
 		}
 		else {}
 	}
@@ -472,6 +458,65 @@ fn auto_complete_request(args []string) []string {
 		}
 	}
 	return list
+}
+
+fn setup_for_shell(shell string) string {
+	mut setup := ''
+	match shell {
+		'bash' {
+			setup = '
+_v_completions() {
+	local src
+	local limit
+	# Send all words up to the word the cursor is currently on
+	let limit=1+\$COMP_CWORD
+	src=\$($vexe complete bash \$(printf "%s\\n" \${COMP_WORDS[@]: 0:\$limit}))
+	if [[ \$? == 0 ]]; then
+		eval \${src}
+		#echo \${src}
+	fi
+}
+
+complete -o nospace -F _v_completions v
+'
+		}
+		'fish' {
+			setup = '
+function __v_completions
+	# Send all words up to the one before the cursor
+	$vexe complete fish (commandline -cop)
+end
+complete -f -c v -a "(__v_completions)"
+'
+		}
+		'zsh' {
+			setup = '
+#compdef v
+_v() {
+	local src
+	# Send all words up to the word the cursor is currently on
+	src=\$($vexe complete zsh \$(printf "%s\\n" \${(@)words[1,\$CURRENT]}))
+	if [[ \$? == 0 ]]; then
+		eval \${src}
+		#echo \${src}
+	fi
+}
+compdef _v v
+'
+		}
+		'powershell' {
+			setup = '
+Register-ArgumentCompleter -Native -CommandName v -ScriptBlock {
+	param(\$commandName, \$wordToComplete, \$cursorPosition)
+		$vexe complete powershell "\$wordToComplete" | ForEach-Object {
+			[System.Management.Automation.CompletionResult]::new(\$_, \$_, \'ParameterValue\', \$_)
+		}
+}
+'
+		}
+		else {}
+	}
+	return setup
 }
 
 fn main() {
