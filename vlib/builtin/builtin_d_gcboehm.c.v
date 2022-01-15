@@ -25,13 +25,11 @@ $if static_boehm ? {
 		#flag -lpthread
 	} $else $if windows {
 		#flag -DGC_NOT_DLL=1
-		$if tinyc {
-			#flag -I@VEXEROOT/thirdparty/libgc/include
-			#flag -L@VEXEROOT/thirdparty/libgc
+		$if tinyc || msvc {
+			#flag -DGC_NOT_DLL=1
+			#flag -I@VEXEROOT/thirdparty/libgc_msvc/include
+			#flag -L@VEXEROOT/thirdparty/libgc_msvc/lib
 			#flag -lgc
-		} $else $if msvc {
-			#flag -DGC_BUILTIN_ATOMIC=1
-			#flag -I@VEXEROOT/thirdparty/libgc/include
 		} $else {
 			#flag -DGC_BUILTIN_ATOMIC=1
 			#flag -I@VEXEROOT/thirdparty/libgc
@@ -48,13 +46,11 @@ $if static_boehm ? {
 		#flag -L/usr/local/lib
 	}
 	$if windows {
-		$if tinyc {
-			#flag -I@VEXEROOT/thirdparty/libgc/include
-			#flag -L@VEXEROOT/thirdparty/libgc
+		$if tinyc || msvc {
+			#flag -DGC_NOT_DLL=1
+			#flag -I@VEXEROOT/thirdparty/libgc_msvc/include
+			#flag -L@VEXEROOT/thirdparty/libgc_msvc/lib
 			#flag -lgc
-		} $else $if msvc {
-			#flag -DGC_BUILTIN_ATOMIC=1
-			#flag -I@VEXEROOT/thirdparty/libgc/include
 		} $else {
 			#flag -DGC_BUILTIN_ATOMIC=1
 			#flag -I@VEXEROOT/thirdparty/libgc
