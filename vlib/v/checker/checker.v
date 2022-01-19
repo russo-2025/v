@@ -2704,7 +2704,8 @@ pub fn (mut c Checker) cast_expr(mut node ast.CastExpr) ast.Type {
 				}
 			}
 		}
-	} else if to_type == ast.bool_type && from_type != ast.bool_type && !c.inside_unsafe {
+	} else if to_type == ast.bool_type && from_type != ast.bool_type && !c.inside_unsafe
+		&& !c.pref.translated {
 		c.error('cannot cast to bool - use e.g. `some_int != 0` instead', node.pos)
 	} else if from_type == ast.none_type && !to_type.has_flag(.optional) {
 		type_name := c.table.type_to_str(to_type)
@@ -3569,6 +3570,10 @@ pub fn (mut c Checker) index_expr(mut node ast.IndexExpr) ast.Type {
 			}
 			.array {
 				node.is_array = true
+				if node.or_expr.kind != .absent && node.index is ast.RangeExpr {
+					c.error('custom error handling on range expressions for arrays is not supported yet.',
+						node.or_expr.pos)
+				}
 				break
 			}
 			.array_fixed {
