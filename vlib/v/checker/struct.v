@@ -51,7 +51,7 @@ pub fn (mut c Checker) struct_decl(mut node ast.StructDecl) {
 			if field.typ != 0 {
 				if !field.typ.is_ptr() {
 					if c.table.unaliased_type(field.typ) == struct_typ_idx {
-						c.error('Field `$field.name` is part of `$node.name`, they can not both have the same type',
+						c.error('field `$field.name` is part of `$node.name`, they can not both have the same type',
 							field.type_pos)
 					}
 				}
@@ -330,10 +330,16 @@ pub fn (mut c Checker) struct_init(mut node ast.StructInit) ast.Type {
 					continue
 				}
 				if field.has_default_expr {
-					if field.default_expr is ast.StructInit && field.default_expr_typ == 0 {
-						idx := c.table.find_type_idx(field.default_expr.typ_str)
-						if idx != 0 {
-							info.fields[i].default_expr_typ = ast.new_type(idx)
+					if field.default_expr_typ == 0 {
+						if field.default_expr is ast.StructInit {
+							idx := c.table.find_type_idx(field.default_expr.typ_str)
+							if idx != 0 {
+								info.fields[i].default_expr_typ = ast.new_type(idx)
+							}
+						} else {
+							if const_field := c.table.global_scope.find_const('$field.default_expr') {
+								info.fields[i].default_expr_typ = const_field.typ
+							}
 						}
 					}
 					continue
