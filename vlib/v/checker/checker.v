@@ -3709,6 +3709,11 @@ pub fn (mut c Checker) enum_val(mut node ast.EnumVal) ast.Type {
 				return ast.void_type
 			}
 		}
+		if typ_idx == 0 {
+			// the actual type is still unknown, produce an error, instead of panic:
+			c.error('unknown enum `$node.enum_name` (type_idx=0)', node.pos)
+			return ast.void_type
+		}
 	}
 	mut typ := ast.new_type(typ_idx)
 	if c.pref.translated {
