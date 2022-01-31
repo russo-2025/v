@@ -76,7 +76,9 @@ fn (mut s Server) handle_ping() {
 	for s.state == .open {
 		time.sleep(s.ping_interval * time.second)
 		for i, _ in s.clients {
-			mut c := s.clients[i]
+			mut c := s.clients[i] or {
+				continue
+			}
 			if c.client.state == .open {
 				c.client.ping() or {
 					s.logger.debug('server-> error sending ping to client')
