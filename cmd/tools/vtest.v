@@ -36,7 +36,10 @@ fn main() {
 
 	mut ts := testing.new_test_session(args_before.join(' '), true)
 	ts.fail_fast = ctx.fail_fast
-	for targ in args_after {
+
+	for i := 0; i < args_after.len; i++ {
+		targ := args_after[i]
+
 		if os.is_dir(targ) {
 			// Fetch all tests from the directory
 			files, skip_files := ctx.should_test_dir(targ.trim_right(os.path_separator),
@@ -60,6 +63,18 @@ fn main() {
 				}
 				.ignore {}
 			}
+		} else if targ == '-tmp-dir' {
+			path := args_after[i + 1]
+
+			if os.is_dir(path) {
+				ts.vtmp_dir = path
+				ts.rm_binaries = false
+			}
+			else {
+				println('invalid dir after -tmp-dir')
+			}
+
+			i++
 		} else {
 			eprintln('\nUnrecognized test file `$targ`.\n `v test` can only be used with folders and/or _test.v files.\n')
 			show_usage()
