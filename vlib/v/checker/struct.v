@@ -81,7 +81,7 @@ pub fn (mut c Checker) struct_decl(mut node ast.StructDecl) {
 							}
 						}
 					} else {
-						c.error('incompatible initializer for field `$field.name`: $err.msg',
+						c.error('incompatible initializer for field `$field.name`: $err.msg()',
 							field.default_expr.pos())
 					}
 				}
@@ -116,7 +116,7 @@ pub fn (mut c Checker) struct_decl(mut node ast.StructDecl) {
 
 pub fn (mut c Checker) struct_init(mut node ast.StructInit) ast.Type {
 	if node.typ == ast.void_type {
-		// Short syntax `({foo: bar})`
+		// short syntax `foo(key:val, key2:val2)`
 		if c.expected_type == ast.void_type {
 			c.error('unexpected short struct syntax', node.pos)
 			return ast.void_type
@@ -130,10 +130,40 @@ pub fn (mut c Checker) struct_init(mut node ast.StructInit) ast.Type {
 	}
 	struct_sym := c.table.sym(node.typ)
 	if struct_sym.info is ast.Struct {
+		// check if the generic param types have been defined
+		for ct in struct_sym.info.concrete_types {
+			ct_sym := c.table.sym(ct)
+			if ct_sym.kind == .placeholder {
+				c.error('unknown type `$ct_sym.name`', node.pos)
+			}
+		}
 		if struct_sym.info.generic_types.len > 0 && struct_sym.info.concrete_types.len == 0
-			&& c.table.cur_concrete_types.len == 0 {
-			c.error('generic struct init must specify type parameter, e.g. Foo<int>',
-				node.pos)
+			&& !node.is_short_syntax {
+			if c.table.cur_concrete_types.len == 0 {
+				c.error('generic struct init must specify type parameter, e.g. Foo<int>',
+					node.pos)
+			} else if node.generic_types.len == 0 {
+				c.error('generic struct init must specify type parameter, e.g. Foo<T>',
+					node.pos)
+			} else if node.generic_types.len > 0
+				&& node.generic_types.len != struct_sym.info.generic_types.len {
+				c.error('generic struct init expects $struct_sym.info.generic_types.len generic parameter, but got $node.generic_types.len',
+					node.pos)
+			} else if node.generic_types.len > 0 {
+				for gtyp in node.generic_types {
+					gtyp_name := c.table.sym(gtyp).name
+					if gtyp_name !in c.table.cur_fn.generic_names {
+						cur_generic_names := '(' + c.table.cur_fn.generic_names.join(',') + ')'
+						c.error('generic struct init type parameter `$gtyp_name` must be within the parameters `$cur_generic_names` of the current generic function',
+							node.pos)
+						break
+					}
+				}
+			}
+		}
+		if node.generic_types.len > 0 && struct_sym.info.generic_types.len == node.generic_types.len
+			&& struct_sym.info.generic_types != node.generic_types {
+			c.table.replace_generic_type(node.typ, node.generic_types)
 		}
 	} else if struct_sym.info is ast.Alias {
 		parent_sym := c.table.sym(struct_sym.info.parent_type)
@@ -278,7 +308,7 @@ pub fn (mut c Checker) struct_init(mut node ast.StructInit) ast.Type {
 					}
 				} else if expr_type != ast.void_type && expr_type_sym.kind != .placeholder {
 					c.check_expected(c.unwrap_generic(expr_type), c.unwrap_generic(field_info.typ)) or {
-						c.error('cannot assign to field `$field_info.name`: $err.msg',
+						c.error('cannot assign to field `$field_info.name`: $err.msg()',
 							field.pos)
 					}
 				}
@@ -310,7 +340,7 @@ pub fn (mut c Checker) struct_init(mut node ast.StructInit) ast.Type {
 							}
 							if obj.is_stack_obj && !c.inside_unsafe {
 								sym := c.table.sym(obj.typ.set_nr_muls(0))
-								if !sym.is_heap() && !c.pref.translated {
+								if !sym.is_heap() && !c.pref.translated && !c.file.is_translated {
 									suggestion := if sym.kind == .struct_ {
 										'declaring `$sym.name` as `[heap]`'
 									} else {
@@ -345,7 +375,7 @@ pub fn (mut c Checker) struct_init(mut node ast.StructInit) ast.Type {
 					continue
 				}
 				if field.typ.is_ptr() && !field.typ.has_flag(.shared_f) && !node.has_update_expr
-					&& !c.pref.translated {
+					&& !c.pref.translated && !c.file.is_translated {
 					c.error('reference field `${type_sym.name}.$field.name` must be initialized',
 						node.pos)
 				}

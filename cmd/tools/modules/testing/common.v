@@ -157,12 +157,21 @@ pub fn new_test_session(_vargs string, will_compile bool) TestSession {
 		$if windows {
 			skip_files << 'examples/database/mysql.v'
 			skip_files << 'examples/database/orm.v'
+			skip_files << 'examples/smtp/mail.v' // requires OpenSSL
 			skip_files << 'examples/websocket/ping.v' // requires OpenSSL
 			skip_files << 'examples/websocket/client-server/client.v' // requires OpenSSL
 			skip_files << 'examples/websocket/client-server/server.v' // requires OpenSSL
 			$if tinyc {
 				skip_files << 'examples/database/orm.v' // try fix it
 			}
+		}
+		$if windows {
+			// TODO: remove when closures on windows are supported
+			skip_files << 'examples/pendulum-simulation/animation.v'
+			skip_files << 'examples/pendulum-simulation/full.v'
+			skip_files << 'examples/pendulum-simulation/parallel.v'
+			skip_files << 'examples/pendulum-simulation/parallel_with_iw.v'
+			skip_files << 'examples/pendulum-simulation/sequential.v'
 		}
 		if testing.github_job != 'sokol-shaders-can-be-compiled' {
 			// These examples need .h files that are produced from the supplied .glsl files,

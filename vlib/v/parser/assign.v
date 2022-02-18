@@ -18,7 +18,7 @@ fn (mut p Parser) assign_stmt() ast.Stmt {
 	return p.partial_assign_stmt(exprs, comments)
 }
 
-const max_expr_level = 310
+const max_expr_level = 100
 
 fn (mut p Parser) check_undefined_variables(exprs []ast.Expr, val ast.Expr) ? {
 	p.expr_level++
@@ -83,6 +83,11 @@ fn (mut p Parser) check_undefined_variables(exprs []ast.Expr, val ast.Expr) ? {
 		ast.StringInterLiteral {
 			for expr_ in val.exprs {
 				p.check_undefined_variables(exprs, expr_) ?
+			}
+		}
+		ast.StructInit {
+			for field in val.fields {
+				p.check_undefined_variables(exprs, field.expr) ?
 			}
 		}
 		else {}
@@ -158,8 +163,9 @@ fn (mut p Parser) partial_assign_stmt(left []ast.Expr, left_comments []ast.Comme
 						iv := lx.info as ast.IdentVar
 						share = iv.share
 						if iv.is_static {
-							if !p.pref.translated && !p.pref.is_fmt && !p.inside_unsafe_fn {
-								return p.error_with_pos('static variables are supported only in -translated mode or in [unsafe] fn',
+							if !p.pref.translated && !p.is_translated && !p.pref.is_fmt
+								&& !p.inside_unsafe_fn {
+								return p.error_with_pos('static variables are supported only in translated mode or in [unsafe] fn',
 									lx.pos)
 							}
 							is_static = true
@@ -217,7 +223,7 @@ fn (mut p Parser) partial_assign_stmt(left []ast.Expr, left_comments []ast.Comme
 	if op == .decl_assign {
 		// a, b := a + 1, b
 		for r in right {
-			p.check_undefined_variables(left, r) or { return p.error_with_pos(err.msg, pos) }
+			p.check_undefined_variables(left, r) or { return p.error_with_pos(err.msg(), pos) }
 		}
 	} else if left.len > 1 {
 		// a, b = b, a

@@ -150,12 +150,12 @@ pub fn rmdir_all(path string) ? {
 	for item in items {
 		fullpath := join_path_single(path, item)
 		if is_dir(fullpath) && !is_link(fullpath) {
-			rmdir_all(fullpath) or { ret_err = err.msg }
+			rmdir_all(fullpath) or { ret_err = err.msg() }
 		} else {
-			rm(fullpath) or { ret_err = err.msg }
+			rm(fullpath) or { ret_err = err.msg() }
 		}
 	}
-	rmdir(path) or { ret_err = err.msg }
+	rmdir(path) or { ret_err = err.msg() }
 	if ret_err.len > 0 {
 		return error(ret_err)
 	}
@@ -404,13 +404,16 @@ fn executable_fallback() string {
 	return exepath
 }
 
-pub struct ErrExecutableNotFound {
-	msg  string = 'os: failed to find executable'
-	code int
+pub struct ExecutableNotFoundError {
+	Error
+}
+
+pub fn (err ExecutableNotFoundError) msg() string {
+	return 'os: failed to find executable'
 }
 
 fn error_failed_to_find_executable() IError {
-	return IError(&ErrExecutableNotFound{})
+	return IError(&ExecutableNotFoundError{})
 }
 
 // find_exe_path walks the environment PATH, just like most shell do, it returns
@@ -612,11 +615,9 @@ pub fn cache_dir() string {
 	// $XDG_CACHE_HOME defines the base directory relative to which user specific
 	// non-essential data files should be stored. If $XDG_CACHE_HOME is either not set
 	// or empty, a default equal to $HOME/.cache should be used.
-	$if !windows {
-		xdg_cache_home := getenv('XDG_CACHE_HOME')
-		if xdg_cache_home != '' {
-			return xdg_cache_home
-		}
+	xdg_cache_home := getenv('XDG_CACHE_HOME')
+	if xdg_cache_home != '' {
+		return xdg_cache_home
 	}
 	cdir := join_path_single(home_dir(), '.cache')
 	if !is_dir(cdir) && !is_link(cdir) {

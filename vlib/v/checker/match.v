@@ -8,7 +8,7 @@ import strings
 pub fn (mut c Checker) match_expr(mut node ast.MatchExpr) ast.Type {
 	node.is_expr = c.expected_type != ast.void_type
 	node.expected_type = c.expected_type
-	if mut node.cond is ast.ParExpr && !c.pref.translated {
+	if mut node.cond is ast.ParExpr && !c.pref.translated && !c.file.is_translated {
 		c.error('unnecessary `()` in `match` condition, use `match expr {` instead of `match (expr) {`.',
 			node.cond.pos)
 	}
@@ -41,7 +41,7 @@ pub fn (mut c Checker) match_expr(mut node ast.MatchExpr) ast.Type {
 				for st in branch.stmts[0..branch.stmts.len - 1] {
 					// must not contain C statements
 					st.check_c_expr() or {
-						c.error('`match` expression branch has $err.msg', st.pos)
+						c.error('`match` expression branch has $err.msg()', st.pos)
 					}
 				}
 			} else if ret_type != ast.void_type {
@@ -333,7 +333,7 @@ fn (mut c Checker) match_exprs(mut node ast.MatchExpr, cond_type_sym ast.TypeSym
 		}
 	}
 	if is_exhaustive {
-		if has_else && !c.pref.translated {
+		if has_else && !c.pref.translated && !c.file.is_translated {
 			c.error('match expression is exhaustive, `else` is unnecessary', else_branch.pos)
 		}
 		return

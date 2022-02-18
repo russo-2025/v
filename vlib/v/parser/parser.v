@@ -14,8 +14,6 @@ import v.errors
 import os
 import hash.fnv1a
 
-pub const builtin_functions = ['print', 'println', 'eprint', 'eprintln', 'isnil', 'panic', 'exit']
-
 pub struct Parser {
 	pref &pref.Preferences
 mut:
@@ -27,73 +25,78 @@ mut:
 	scanner           &scanner.Scanner
 	comments_mode     scanner.CommentsMode = .skip_comments
 	// see comment in parse_file
-	tok                   token.Token
-	prev_tok              token.Token
-	peek_tok              token.Token
-	table                 &ast.Table
-	language              ast.Language
-	fn_language           ast.Language // .c for `fn C.abcd()` declarations
-	expr_level            int  // prevent too deep recursions for pathological programs
-	inside_vlib_file      bool // true for all vlib/ files
-	inside_test_file      bool // when inside _test.v or _test.vv file
-	inside_if             bool
-	inside_if_expr        bool
-	inside_ct_if_expr     bool
-	inside_or_expr        bool
-	inside_for            bool
-	inside_fn             bool // true even with implicit main
-	inside_unsafe_fn      bool
-	inside_str_interp     bool
-	inside_array_lit      bool
-	inside_in_array       bool
-	inside_match          bool // to separate `match A { }` from `Struct{}`
-	inside_select         bool // to allow `ch <- Struct{} {` inside `select`
-	inside_match_case     bool // to separate `match_expr { }` from `Struct{}`
-	inside_match_body     bool // to fix eval not used TODO
-	inside_unsafe         bool
-	inside_sum_type       bool // to prevent parsing inline sum type again
-	inside_asm_template   bool
-	inside_asm            bool
-	inside_defer          bool
-	inside_generic_params bool       // indicates if parsing between `<` and `>` of a method/function
-	inside_receiver_param bool       // indicates if parsing the receiver parameter inside the first `(` and `)` of a method
-	or_is_handled         bool       // ignore `or` in this expression
-	builtin_mod           bool       // are we in the `builtin` module?
-	mod                   string     // current module name
-	is_manualfree         bool       // true when `[manualfree] module abc`, makes *all* fns in the current .v file, opt out of autofree
-	has_globals           bool       // `[has_globals] module abc` - allow globals declarations, even without -enable-globals, in that single .v file __only__
-	is_generated          bool       // `[generated] module abc` - turn off compiler notices for that single .v file __only__.
-	attrs                 []ast.Attr // attributes before next decl stmt
-	expr_mod              string     // for constructing full type names in parse_type()
-	scope                 &ast.Scope
-	imports               map[string]string // alias => mod_name
-	ast_imports           []ast.Import      // mod_names
-	used_imports          []string // alias
-	auto_imports          []string // imports, the user does not need to specify
-	imported_symbols      map[string]string
-	is_amp                bool // for generating the right code for `&Foo{}`
-	returns               bool
-	is_stmt_ident         bool // true while the beginning of a statement is an ident/selector
-	expecting_type        bool // `is Type`, expecting type
-	errors                []errors.Error
-	warnings              []errors.Warning
-	notices               []errors.Notice
-	vet_errors            []vet.Error
-	cur_fn_name           string
-	label_names           []string
-	name_error            bool // indicates if the token is not a name or the name is on another line
-	n_asm                 int  // controls assembly labels
-	global_labels         []string
-	comptime_if_cond      bool
-	defer_vars            []ast.Ident
-	should_abort          bool // when too many errors/warnings/notices are accumulated, should_abort becomes true, and the parser should stop
-	codegen_text          string
+	tok                       token.Token
+	prev_tok                  token.Token
+	peek_tok                  token.Token
+	table                     &ast.Table
+	language                  ast.Language
+	fn_language               ast.Language // .c for `fn C.abcd()` declarations
+	expr_level                int  // prevent too deep recursions for pathological programs
+	inside_vlib_file          bool // true for all vlib/ files
+	inside_test_file          bool // when inside _test.v or _test.vv file
+	inside_if                 bool
+	inside_if_expr            bool
+	inside_ct_if_expr         bool
+	inside_or_expr            bool
+	inside_for                bool
+	inside_fn                 bool // true even with implicit main
+	inside_unsafe_fn          bool
+	inside_str_interp         bool
+	inside_array_lit          bool
+	inside_in_array           bool
+	inside_match              bool // to separate `match A { }` from `Struct{}`
+	inside_select             bool // to allow `ch <- Struct{} {` inside `select`
+	inside_match_case         bool // to separate `match_expr { }` from `Struct{}`
+	inside_match_body         bool // to fix eval not used TODO
+	inside_unsafe             bool
+	inside_sum_type           bool // to prevent parsing inline sum type again
+	inside_asm_template       bool
+	inside_asm                bool
+	inside_defer              bool
+	inside_generic_params     bool       // indicates if parsing between `<` and `>` of a method/function
+	inside_receiver_param     bool       // indicates if parsing the receiver parameter inside the first `(` and `)` of a method
+	or_is_handled             bool       // ignore `or` in this expression
+	builtin_mod               bool       // are we in the `builtin` module?
+	mod                       string     // current module name
+	is_manualfree             bool       // true when `[manualfree] module abc`, makes *all* fns in the current .v file, opt out of autofree
+	has_globals               bool       // `[has_globals] module abc` - allow globals declarations, even without -enable-globals, in that single .v file __only__
+	is_generated              bool       // `[generated] module abc` - turn off compiler notices for that single .v file __only__.
+	is_translated             bool       // `[translated] module abc` - mark a file as translated, to relax some compiler checks for translated code.
+	attrs                     []ast.Attr // attributes before next decl stmt
+	expr_mod                  string     // for constructing full type names in parse_type()
+	scope                     &ast.Scope
+	imports                   map[string]string // alias => mod_name
+	ast_imports               []ast.Import      // mod_names
+	used_imports              []string // alias
+	auto_imports              []string // imports, the user does not need to specify
+	imported_symbols          map[string]string
+	is_amp                    bool // for generating the right code for `&Foo{}`
+	returns                   bool
+	is_stmt_ident             bool // true while the beginning of a statement is an ident/selector
+	expecting_type            bool // `is Type`, expecting type
+	errors                    []errors.Error
+	warnings                  []errors.Warning
+	notices                   []errors.Notice
+	vet_errors                []vet.Error
+	cur_fn_name               string
+	label_names               []string
+	name_error                bool // indicates if the token is not a name or the name is on another line
+	n_asm                     int  // controls assembly labels
+	global_labels             []string
+	comptime_if_cond          bool
+	defer_vars                []ast.Ident
+	should_abort              bool // when too many errors/warnings/notices are accumulated, should_abort becomes true, and the parser should stop
+	codegen_text              string
+	struct_init_generic_types []ast.Type
 }
 
 __global codegen_files = []&ast.File{}
 
 // for tests
 pub fn parse_stmt(text string, table &ast.Table, scope &ast.Scope) ast.Stmt {
+	$if trace_parse_stmt ? {
+		eprintln('> ${@MOD}.${@FN} text: $text')
+	}
 	mut p := Parser{
 		scanner: scanner.new_scanner(text, .skip_comments, &pref.Preferences{})
 		inside_test_file: true
@@ -111,6 +114,9 @@ pub fn parse_stmt(text string, table &ast.Table, scope &ast.Scope) ast.Stmt {
 }
 
 pub fn parse_comptime(text string, table &ast.Table, pref &pref.Preferences, scope &ast.Scope) &ast.File {
+	$if trace_parse_comptime ? {
+		eprintln('> ${@MOD}.${@FN} text: $text')
+	}
 	mut p := Parser{
 		scanner: scanner.new_scanner(text, .skip_comments, pref)
 		table: table
@@ -125,6 +131,9 @@ pub fn parse_comptime(text string, table &ast.Table, pref &pref.Preferences, sco
 }
 
 pub fn parse_text(text string, path string, table &ast.Table, comments_mode scanner.CommentsMode, pref &pref.Preferences) &ast.File {
+	$if trace_parse_text ? {
+		eprintln('> ${@MOD}.${@FN} comments_mode: ${comments_mode:-20} | path: ${path:-20} | text: $text')
+	}
 	mut p := Parser{
 		scanner: scanner.new_scanner(text, comments_mode, pref)
 		comments_mode: comments_mode
@@ -162,19 +171,18 @@ pub fn (mut p Parser) set_path(path string) {
 	p.file_name = path
 	p.file_base = os.base(path)
 	p.file_name_dir = os.dir(path)
-	if p.file_name_dir.contains('vlib') {
-		p.inside_vlib_file = true
-	}
+	p.inside_vlib_file = p.file_name_dir.contains('vlib')
+	p.inside_test_file = p.file_base.ends_with('_test.v') || p.file_base.ends_with('_test.vv')
+		|| p.file_base.all_before_last('.v').all_before_last('.').ends_with('_test')
+
 	hash := fnv1a.sum64_string(path)
 	p.unique_prefix = hash.hex_full()
-	if p.file_base.ends_with('_test.v') || p.file_base.ends_with('_test.vv') {
-		p.inside_test_file = true
-	}
+
+	p.file_backend_mode = .v
 	before_dot_v := path.all_before_last('.v') // also works for .vv and .vsh
 	language := before_dot_v.all_after_last('.')
 	language_with_underscore := before_dot_v.all_after_last('_')
 	if language == before_dot_v && language_with_underscore == before_dot_v {
-		p.file_backend_mode = .v
 		return
 	}
 	actual_language := if language == before_dot_v { language_with_underscore } else { language }
@@ -200,6 +208,9 @@ pub fn parse_file(path string, table &ast.Table, comments_mode scanner.CommentsM
 	// the parser gives feedback to the scanner about toplevel statements, so that the scanner can skip
 	// all the tricky inner comments. This is needed because we do not have a good general solution
 	// for handling them, and should be removed when we do (the general solution is also needed for vfmt)
+	$if trace_parse_file ? {
+		eprintln('> ${@MOD}.${@FN} comments_mode: ${comments_mode:-20} | path: $path')
+	}
 	mut p := Parser{
 		scanner: scanner.new_scanner_file(path, comments_mode, pref)
 		comments_mode: comments_mode
@@ -219,6 +230,9 @@ pub fn parse_file(path string, table &ast.Table, comments_mode scanner.CommentsM
 }
 
 pub fn parse_vet_file(path string, table_ &ast.Table, pref &pref.Preferences) (&ast.File, []vet.Error) {
+	$if trace_parse_vet_file ? {
+		eprintln('> ${@MOD}.${@FN} path: $path')
+	}
 	global_scope := &ast.Scope{
 		parent: 0
 	}
@@ -323,6 +337,7 @@ pub fn (mut p Parser) parse() &ast.File {
 		path_base: p.file_base
 		is_test: p.inside_test_file
 		is_generated: p.is_generated
+		is_translated: p.is_translated
 		nr_lines: p.scanner.line_nr
 		nr_bytes: p.scanner.text.len
 		mod: module_decl
@@ -651,6 +666,7 @@ pub fn (mut p Parser) top_stmt() ast.Stmt {
 					p.close_scope()
 					return ast.FnDecl{
 						name: 'main.main'
+						short_name: 'main'
 						mod: 'main'
 						is_main: true
 						stmts: stmts
@@ -1885,7 +1901,7 @@ fn (mut p Parser) parse_multi_expr(is_top_level bool) ast.Stmt {
 	// TODO remove translated
 	if p.tok.kind in [.assign, .decl_assign] || p.tok.kind.is_assign() {
 		return p.partial_assign_stmt(left, left_comments)
-	} else if !p.pref.translated && !p.pref.is_fmt
+	} else if !p.pref.translated && !p.is_translated && !p.pref.is_fmt
 		&& tok.kind !in [.key_if, .key_match, .key_lock, .key_rlock, .key_select] {
 		for node in left {
 			if (is_top_level || p.tok.kind != .rcbr) && node !is ast.CallExpr
@@ -3045,6 +3061,9 @@ fn (mut p Parser) module_decl() ast.Module {
 							ma.pos)
 					}
 				}
+				'translated' {
+					p.is_translated = true
+				}
 				else {
 					p.error_with_pos('unknown module attribute `[$ma.name]`', ma.pos)
 					return mod_node
@@ -3314,7 +3333,7 @@ fn (mut p Parser) global_decl() ast.GlobalDecl {
 	}
 
 	if !p.has_globals && !p.pref.enable_globals && !p.pref.is_fmt && !p.pref.translated
-		&& !p.pref.is_livemain && !p.pref.building_v && !p.builtin_mod {
+		&& !p.is_translated && !p.pref.is_livemain && !p.pref.building_v && !p.builtin_mod {
 		p.error('use `v -enable-globals ...` to enable globals')
 		return ast.GlobalDecl{}
 	}

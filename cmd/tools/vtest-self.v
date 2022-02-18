@@ -45,6 +45,7 @@ const (
 		'vlib/sqlite/sqlite_orm_test.v',
 		'vlib/v/tests/orm_sub_struct_test.v',
 		'vlib/v/tests/orm_sub_array_struct_test.v',
+		'vlib/v/tests/sql_statement_inside_fn_call_test.v',
 		'vlib/vweb/tests/vweb_test.v',
 		'vlib/vweb/request_test.v',
 		'vlib/net/http/request_test.v',
@@ -52,6 +53,7 @@ const (
 		'vlib/vweb/route_test.v',
 		'vlib/net/websocket/websocket_test.v',
 		'vlib/crypto/rand/crypto_rand_read_test.v',
+		'vlib/net/smtp/smtp_test.v',
 	]
 	skip_with_fsanitize_address   = [
 		'vlib/net/websocket/websocket_test.v',
@@ -83,6 +85,7 @@ const (
 		'vlib/orm/orm_test.v',
 		'vlib/v/tests/orm_sub_struct_test.v',
 		'vlib/v/tests/orm_sub_array_struct_test.v',
+		'vlib/v/tests/sql_statement_inside_fn_call_test.v',
 		'vlib/clipboard/clipboard_test.v',
 		'vlib/vweb/tests/vweb_test.v',
 		'vlib/vweb/request_test.v',
@@ -94,6 +97,7 @@ const (
 		'vlib/net/http/server_test.v',
 		'vlib/net/http/response_test.v',
 		'vlib/builtin/js/array_test.js.v',
+		'vlib/net/smtp/smtp_test.v',
 	]
 	skip_on_linux                 = [
 		'do_not_remove',
@@ -119,6 +123,7 @@ const (
 		'vlib/vweb/route_test.v',
 		'vlib/sync/many_times_test.v',
 		'vlib/sync/once_test.v',
+		'vlib/net/smtp/smtp_test.v',
 	]
 	skip_on_non_windows           = [
 		'do_not_remove',

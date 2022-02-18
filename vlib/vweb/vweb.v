@@ -21,7 +21,7 @@ pub struct Result {}
 pub const (
 	methods_with_form = [http.Method.post, .put, .patch]
 	headers_close     = http.new_custom_header_from_map({
-		'Server':          'VWeb'
+		'Server':                           'VWeb'
 		http.CommonHeader.connection.str(): 'close'
 	}) or { panic('should never fail') }
 
@@ -255,7 +255,7 @@ pub fn (mut ctx Context) json_pretty<T>(j T) Result {
 pub fn (mut ctx Context) file(f_path string) Result {
 	ext := os.file_ext(f_path)
 	data := os.read_file(f_path) or {
-		eprint(err.msg)
+		eprint(err.msg())
 		ctx.server_error(500)
 		return Result{}
 	}
@@ -376,17 +376,31 @@ interface DbInterface {
 	db voidptr
 }
 
-// run_app
-[manualfree]
+// run - start a new VWeb server, listening to all available addresses, at the specified `port`
 pub fn run<T>(global_app &T, port int) {
-	mut l := net.listen_tcp(.ip, ':$port') or { panic('failed to listen $err.code $err') }
+	run_at<T>(global_app, host: '', port: port, family: .ip) or { panic(err.msg()) }
+}
+
+[params]
+pub struct RunParams {
+	host   string
+	port   int = 8080
+	family net.AddrFamily = .ip6 // use `family: .ip, host: 'localhost'` when you want it to bind only to 127.0.0.1
+}
+
+// run_at - start a new VWeb server, listening only on a specific address `host`, at the specified `port`
+// Example: `vweb.run_at(app, 'localhost', 8099)`
+[manualfree]
+pub fn run_at<T>(global_app &T, params RunParams) ? {
+	mut l := net.listen_tcp(params.family, '$params.host:$params.port') or {
+		return error('failed to listen $err.code $err')
+	}
 
 	// Parsing methods attributes
 	mut routes := map[string]Route{}
 	$for method in T.methods {
 		http_methods, route_path := parse_attrs(method.name, method.attrs) or {
-			eprintln('error parsing method attributes: $err')
-			return
+			return error('error parsing method attributes: $err')
 		}
 
 		routes[method.name] = Route{
@@ -394,7 +408,8 @@ pub fn run<T>(global_app &T, port int) {
 			path: route_path
 		}
 	}
-	println('[Vweb] Running app on http://localhost:$port')
+	host := if params.host == '' { 'localhost' } else { params.host }
+	println('[Vweb] Running app on http://$host:$params.port/')
 	for {
 		// Create a new app object for each connection, copy global data like db connections
 		mut request_app := &T{}
@@ -411,7 +426,7 @@ pub fn run<T>(global_app &T, port int) {
 		request_app.Context = global_app.Context // copy the context ref that contains static files map etc
 		mut conn := l.accept() or {
 			// failures should not panic
-			eprintln('accept() failed with error: $err.msg')
+			eprintln('accept() failed with error: $err.msg()')
 			continue
 		}
 		go handle_conn<T>(mut conn, mut request_app, routes)
@@ -638,7 +653,9 @@ pub fn (mut ctx Context) mount_static_folder_at(directory_path string, mount_pat
 		return false
 	}
 	dir_path := directory_path.trim_right('/')
-	ctx.scan_static_directory(dir_path, mount_path[1..])
+
+	trim_mount_path := mount_path.trim_left('/').trim_right('/')
+	ctx.scan_static_directory(dir_path, '/$trim_mount_path')
 	return true
 }
 

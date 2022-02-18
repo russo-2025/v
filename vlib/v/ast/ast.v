@@ -183,7 +183,6 @@ pub:
 pub struct StringInterLiteral {
 pub:
 	vals       []string
-	exprs      []Expr
 	fwidths    []int
 	precisions []int
 	pluss      []bool
@@ -191,6 +190,7 @@ pub:
 	fmt_poss   []token.Pos
 	pos        token.Pos
 pub mut:
+	exprs      []Expr
 	expr_types []Type
 	fmts       []byte
 	need_fmts  []bool // an explicit non-default fmt required, e.g. `x`
@@ -362,11 +362,10 @@ pub:
 	generic_types []Type
 	attrs         []Attr
 pub mut:
-	methods []FnDecl
-	fields  []StructField
-	//
-	ifaces              []InterfaceEmbedding
-	are_ifaces_expanded bool
+	methods             []FnDecl
+	fields              []StructField
+	embeds              []InterfaceEmbedding
+	are_embeds_expanded bool
 }
 
 pub struct StructInitField {
@@ -397,9 +396,10 @@ pub mut:
 
 pub struct StructInit {
 pub:
-	pos      token.Pos
-	name_pos token.Pos
-	is_short bool
+	pos             token.Pos
+	name_pos        token.Pos
+	is_short        bool
+	is_short_syntax bool
 pub mut:
 	unresolved           bool
 	pre_comments         []Comment
@@ -408,9 +408,11 @@ pub mut:
 	update_expr          Expr
 	update_expr_type     Type
 	update_expr_comments []Comment
+	is_update_embed      bool
 	has_update_expr      bool
 	fields               []StructInitField
 	embeds               []StructInitEmbed
+	generic_types        []Type
 }
 
 // import statement
@@ -447,8 +449,9 @@ pub mut:
 // function or method declaration
 pub struct FnDecl {
 pub:
-	name            string
-	mod             string
+	name            string // 'math.bits.normalize'
+	short_name      string // 'normalize'
+	mod             string // 'math.bits'
 	is_deprecated   bool
 	is_pub          bool
 	is_variadic     bool
@@ -456,7 +459,7 @@ pub:
 	is_noreturn     bool        // true, when [noreturn] is used on a fn
 	is_manualfree   bool        // true, when [manualfree] is used on a fn
 	is_main         bool        // true for `fn main()`
-	is_test         bool        // true for `fn test_abcde`
+	is_test         bool        // true for `fn test_abcde() {}`, false for `fn test_abc(x int) {}`, or for fns that do not start with test_
 	is_conditional  bool        // true for `[if abc] fn abc(){}`
 	is_exported     bool        // true for `[export: 'exact_C_name']`
 	is_keep_alive   bool        // passed memory must not be freed (by GC) before function returns
@@ -531,6 +534,7 @@ pub mut:
 	should_be_skipped  bool   // true for calls to `[if someflag?]` functions, when there is no `-d someflag`
 	concrete_types     []Type // concrete types, e.g. <int, string>
 	concrete_list_pos  token.Pos
+	raw_concrete_types []Type
 	free_receiver      bool // true if the receiver expression needs to be freed
 	scope              &Scope
 	from_embed_types   []Type // holds the type of the embed that the method is called from
@@ -667,12 +671,13 @@ pub mut:
 [heap]
 pub struct File {
 pub:
-	nr_lines     int    // number of source code lines in the file (including newlines and comments)
-	nr_bytes     int    // number of processed source code bytes
-	mod          Module // the module of the source file (from `module xyz` at the top)
-	global_scope &Scope
-	is_test      bool // true for _test.v files
-	is_generated bool // true for `[generated] module xyz` files; turn off notices
+	nr_lines      int    // number of source code lines in the file (including newlines and comments)
+	nr_bytes      int    // number of processed source code bytes
+	mod           Module // the module of the source file (from `module xyz` at the top)
+	global_scope  &Scope
+	is_test       bool // true for _test.v files
+	is_generated  bool // true for `[generated] module xyz` files; turn off notices
+	is_translated bool // true for `[translated] module xyz` files; turn off some checks
 pub mut:
 	path             string // absolute path of the source file - '/projects/v/file.v'
 	path_base        string // file name - 'file.v' (useful for tracing)

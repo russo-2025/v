@@ -110,7 +110,7 @@ pub fn new_scanner_file(file_path string, comments_mode CommentsMode, pref &pref
 		verror('$file_path is not a file')
 	}
 	raw_text := util.read_file(file_path) or {
-		verror(err.msg)
+		verror(err.msg())
 		return voidptr(0)
 	}
 	mut s := &Scanner{
@@ -1203,21 +1203,6 @@ fn (mut s Scanner) ident_string() string {
 		}
 		if c == scanner.b_lf {
 			s.inc_line_number()
-		}
-		// Don't allow \0
-		if c == `0` && s.pos > 2 && prevc == scanner.backslash {
-			if (s.pos < s.text.len - 1 && s.text[s.pos + 1].is_digit())
-				|| s.count_symbol_before(s.pos - 1, scanner.backslash) % 2 == 0 {
-			} else if !is_cstr && !is_raw {
-				s.error(r'cannot use `\0` (NULL character) in the string literal')
-			}
-		}
-		// Don't allow \x00
-		if c == `0` && s.pos > 5 && s.expect('\\x0', s.pos - 3) {
-			if s.count_symbol_before(s.pos - 3, scanner.backslash) % 2 == 0 {
-			} else if !is_cstr && !is_raw {
-				s.error(r'cannot use `\x00` (NULL character) in the string literal')
-			}
 		}
 		// Escape `\x` `\u`
 		if backslash_count % 2 == 1 && !is_raw && !is_cstr {

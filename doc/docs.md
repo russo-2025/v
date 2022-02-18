@@ -113,12 +113,15 @@ For more details and troubleshooting, please visit the [vab GitHub repository](h
     * [Sum types](#sum-types)
     * [Type aliases](#type-aliases)
     * [Option/Result types & error handling](#optionresult-types-and-error-handling)
+* [Custom error types](#custom-error-types)
 * [Generics](#generics)
 * [Concurrency](#concurrency)
     * [Spawning Concurrent Tasks](#spawning-concurrent-tasks)
     * [Channels](#channels)
     * [Shared Objects](#shared-objects)
-* [Decoding JSON](#decoding-json)
+* [JSON](#json)
+	* [Decoding JSON](#decoding-json)
+	* [Encoding JSON](#encoding-json)
 * [Testing](#testing)
 * [Memory management](#memory-management)
     * [Stack and Heap](#stack-and-heap)
@@ -163,7 +166,7 @@ For more details and troubleshooting, please visit the [vab GitHub repository](h
 
 <!--
 NB: there are several special keywords, which you can put after the code fences for v:
-compile, live, ignore, failcompile, oksyntax, badsyntax, wip, nofmt
+compile, cgen, live, ignore, failcompile, oksyntax, badsyntax, wip, nofmt
 For more details, do: `v check-md`
 -->
 
@@ -585,7 +588,7 @@ To use a format specifier, follow this pattern:
   support the use of `'` or `#` as format flags, and V supports but doesn't need `+` to right-align
   since that's the default.)
 - width: may be an integer value describing the minimum width of total field to output.
-- precision: an integer value preceeded by a `.` will guarantee that many digits after the decimal
+- precision: an integer value preceded by a `.` will guarantee that many digits after the decimal
   point, if the input variable is a float. Ignored if variable is an integer.
 - type: `f` and `F` specify the input is a float and should be rendered as such, `e` and `E` specify
   the input is a float and should be rendered as an exponent (partially broken), `g` and `G` specify
@@ -712,6 +715,7 @@ A string can be converted to runes by the `.runes()` method.
 ```v
 hello := 'Hello World 👋'
 hello_runes := hello.runes() // [`H`, `e`, `l`, `l`, `o`, ` `, `W`, `o`, `r`, `l`, `d`, ` `, `👋`]
+assert hello_runes.string() == hello
 ```
 
 ### Numbers
@@ -1393,7 +1397,7 @@ println(s)
 You can check the current type of a sum type using `is` and its negated form `!is`.
 
 You can do it either in an `if`:
-```v
+```v cgen
 struct Abc {
 	val string
 }
@@ -2644,18 +2648,18 @@ particularly useful for initializing a C library.
 ## Type Declarations
 
 ### Interfaces
-
 ```v
+// interface-example.1
 struct Dog {
-	breed string
-}
-
-struct Cat {
 	breed string
 }
 
 fn (d Dog) speak() string {
 	return 'woof'
+}
+
+struct Cat {
+	breed string
 }
 
 fn (c Cat) speak() string {
@@ -2668,14 +2672,16 @@ interface Speaker {
 	speak() string
 }
 
-dog := Dog{'Leonberger'}
-cat := Cat{'Siamese'}
+fn main() {
+	dog := Dog{'Leonberger'}
+	cat := Cat{'Siamese'}
 
-mut arr := []Speaker{}
-arr << dog
-arr << cat
-for item in arr {
-	println('a $item.breed says: $item.speak()')
+	mut arr := []Speaker{}
+	arr << dog
+	arr << cat
+	for item in arr {
+		println('a $item.breed says: $item.speak()')
+	}
 }
 ```
 
@@ -2688,6 +2694,7 @@ An interface can have a `mut:` section. Implementing types will need
 to have a `mut` receiver, for methods declared in the `mut:` section
 of an interface.
 ```v
+// interface-example.2
 module main
 
 pub interface Foo {
@@ -2731,20 +2738,29 @@ fn fn1(s Foo) {
 
 We can test the underlying type of an interface using dynamic cast operators:
 ```v oksyntax
+// interface-exmaple.3 (continued from interface-exampe.1)
 interface Something {}
 
 fn announce(s Something) {
 	if s is Dog {
 		println('a $s.breed dog') // `s` is automatically cast to `Dog` (smart cast)
 	} else if s is Cat {
-		println('a $s.breed cat')
+		println('a cat speaks $s.speak()')
 	} else {
 		println('something else')
 	}
 }
+
+fn main() {
+	dog := Dog{'Leonberger'}
+	cat := Cat{'Siamese'}
+	announce(dog)
+	announce(cat)
+}
 ```
 
 ```v
+// interface-example.4
 interface IFoo {
 	foo()
 }
@@ -2789,38 +2805,52 @@ For more information, see [Dynamic casts](#dynamic-casts).
 
 #### Interface method definitions
 
-Also unlike Go, an interface may implement a method.
-These methods are not implemented by structs which implement that interface.
+Also unlike Go, an interface can have it's own methods, similar to how
+structs can have their methods. These 'interface methods' do not have
+to be implemented, by structs which implement that interface.
+They are just a convenient way to write `i.some_function()` instead of
+`some_function(i)`, similar to how struct methods can be looked at, as
+a convenience for writing `s.xyz()` instead of `xyz(s)`.
 
-When a struct is wrapped in an interface that has implemented a method
-with the same name as one implemented by this struct, only the method
-implemented on the interface is called.
+N.B. This feature is NOT a "default implementation" like in C#.
+
+For example, if a struct `cat` is wrapped in an interface `a`, that has
+implemented a method with the same name `speak`, as a method implemented by 
+the struct, and you do `a.speak()`, *only* the interface method is called:
 
 ```v
-struct Cat {}
-
-fn (c Cat) speak() string {
-	return 'meow!'
-}
-
 interface Adoptable {}
 
 fn (a Adoptable) speak() string {
 	return 'adopt me!'
 }
 
-fn new_adoptable() Adoptable {
-	return Cat{}
+struct Cat {}
+
+fn (c Cat) speak() string {
+	return 'meow!'
 }
+
+struct Dog {}
 
 fn main() {
 	cat := Cat{}
-	assert cat.speak() == 'meow!'
-	a := new_adoptable()
-	assert a.speak() == 'adopt me!'
+	assert dump(cat.speak()) == 'meow!'
+	//
+	a := Adoptable(cat)
+	assert dump(a.speak()) == 'adopt me!' // call Adoptable's `speak`
 	if a is Cat {
-		println(a.speak()) // meow!
+		// Inside this `if` however, V knows that `a` is not just any
+		// kind of Adoptable, but actually a Cat, so it will use the
+		// Cat `speak`, NOT the Adoptable `speak`:
+		dump(a.speak()) // meow!
 	}
+	//
+	b := Adoptable(Dog{})
+	assert dump(b.speak()) == 'adopt me!' // call Adoptable's `speak`
+	// if b is Dog {
+	// 	dump(b.speak()) // error: unknown method or field: Dog.speak
+	// }
 }
 ```
 
@@ -3322,6 +3352,39 @@ if resp := http.get('https://google.com') {
 Above, `http.get` returns a `?http.Response`. `resp` is only in scope for the first
 `if` branch. `err` is only in scope for the `else` branch.
 
+
+## Custom error types
+
+V gives you the ability to define custom error types through the `IError` interface. 
+The interface requires two methods: `msg() string` and `code() int`. Every type that 
+implements these methods can be used as an error. 
+
+When defining a custom error type it is recommended to embed the builtin `Error` default 
+implementation. This provides an empty default implementation for both required methods, 
+so you only have to implement what you really need, and may provide additional utility 
+functions in the future.
+
+```v
+struct PathError {
+	Error
+	path string
+}
+
+fn (err PathError) msg() string {
+	return 'Failed to open path: $err.path'
+}
+
+fn try_open(path string) ? {
+	return IError(PathError{
+		path: path
+	})
+}
+
+fn main() {
+	try_open('/tmp') or { panic(err) }
+}
+```
+
 ## Generics
 
 ```v wip
@@ -3699,7 +3762,14 @@ fn main() {
 ```
 Shared variables must be structs, arrays or maps.
 
-## Decoding JSON
+## JSON
+
+Because of the ubiquitous nature of JSON, support for it is built directly into V.
+
+V generates code for JSON encoding and decoding.
+No runtime reflection is used. This results in much better performance.
+
+### Decoding JSON
 
 ```v
 import json
@@ -3737,14 +3807,32 @@ println(foos[0].x)
 println(foos[1].x)
 ```
 
-Because of the ubiquitous nature of JSON, support for it is built directly into V.
-
 The `json.decode` function takes two arguments:
 the first is the type into which the JSON value should be decoded and
 the second is a string containing the JSON data.
 
-V generates code for JSON encoding and decoding.
-No runtime reflection is used. This results in much better performance.
+### Encoding JSON
+
+```v
+import json
+
+struct User {
+	name  string
+	score i64
+}
+
+mut data := map[string]int{}
+user := &User{
+	name: 'Pierre'
+	score: 1024
+}
+
+data['x'] = 42
+data['y'] = 360
+
+println(json.encode(data)) // {"x":42,"y":360}
+println(json.encode(user)) // {"name":"Pierre","score":1024}
+```
 
 ## Testing
 
@@ -5102,40 +5190,42 @@ For all supported options check the latest help:
 
 #### `$if` condition
 ```v
-// Support for multiple conditions in one branch
-$if ios || android {
-	println('Running on a mobile device!')
-}
-$if linux && x64 {
-	println('64-bit Linux.')
-}
-// Usage as expression
-os := $if windows { 'Windows' } $else { 'UNIX' }
-println('Using $os')
-// $else-$if branches
-$if tinyc {
-	println('tinyc')
-} $else $if clang {
-	println('clang')
-} $else $if gcc {
-	println('gcc')
-} $else {
-	println('different compiler')
-}
-$if test {
-	println('testing')
-}
-// v -cg ...
-$if debug {
-	println('debugging')
-}
-// v -prod ...
-$if prod {
-	println('production build')
-}
-// v -d option ...
-$if option ? {
-	println('custom option')
+fn main() {
+	// Support for multiple conditions in one branch
+	$if ios || android {
+		println('Running on a mobile device!')
+	}
+	$if linux && x64 {
+		println('64-bit Linux.')
+	}
+	// Usage as expression
+	os := $if windows { 'Windows' } $else { 'UNIX' }
+	println('Using $os')
+	// $else-$if branches
+	$if tinyc {
+		println('tinyc')
+	} $else $if clang {
+		println('clang')
+	} $else $if gcc {
+		println('gcc')
+	} $else {
+		println('different compiler')
+	}
+	$if test {
+		println('testing')
+	}
+	// v -cg ...
+	$if debug {
+		println('debugging')
+	}
+	// v -prod ...
+	$if prod {
+		println('production build')
+	}
+	// v -d option ...
+	$if option ? {
+		println('custom option')
+	}
 }
 ```
 
@@ -5546,6 +5636,12 @@ fn main() {
 ```
 
 Build this example with `v -live message.v`.
+	
+You can also run this example with `v -live run message.v`. 
+	Make sure that in command you use a path to a V's file, 
+	**not** a path to a folder (like `v -live run .`) - 
+	in that case you need to modify content of a folder (add new file, for example), 
+	because changes in *message.v* will have no effect.
 
 Functions that you want to be reloaded must have `[live]` attribute
 before their definition.

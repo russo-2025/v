@@ -61,7 +61,10 @@ fn (mut g Gen) fn_decl(node ast.FnDecl) {
 		// TODO true for not just "builtin"
 		// TODO: clean this up
 		mod := if g.is_builtin_mod { 'builtin' } else { node.name.all_before_last('.') }
-		if (mod != g.module_built && node.mod != g.module_built.after('/')) || should_bundle_module {
+		// for now dont skip generic functions as they are being marked as static
+		// when -usecache is enabled, until a better solution is implemented.
+		if ((mod != g.module_built && node.mod != g.module_built.after('/'))
+			|| should_bundle_module) && node.generic_names.len == 0 {
 			// Skip functions that don't have to be generated for this module.
 			// println('skip bm $node.name mod=$node.mod module_built=$g.module_built')
 			skip = true
@@ -269,12 +272,21 @@ fn (mut g Gen) gen_fn_decl(node &ast.FnDecl, skip bool) {
 				g.definitions.write_string('VV_LOCAL_SYMBOL ')
 			}
 		}
-		fn_header := '$type_name $fn_attrs${name}('
+		// as a temp solution generic functions are marked static
+		// when -usecache is enabled to fix duplicate symbols with clang
+		// TODO: implement a better sulution
+		visibility_kw := if g.cur_concrete_types.len > 0
+			&& (g.pref.build_mode == .build_module || g.pref.use_cache) {
+			'static '
+		} else {
+			''
+		}
+		fn_header := '$visibility_kw$type_name $fn_attrs${name}('
 		g.definitions.write_string(fn_header)
 		g.write(fn_header)
 	}
 	arg_start_pos := g.out.len
-	fargs, fargtypes, heap_promoted := g.fn_args(node.params, node.scope)
+	fargs, fargtypes, heap_promoted := g.fn_decl_params(node.params, node.scope, node.is_variadic)
 	if is_closure {
 		mut s := '$cur_closure_ctx *$c.closure_ctx'
 		if node.params.len > 0 {
@@ -286,6 +298,9 @@ fn (mut g Gen) gen_fn_decl(node &ast.FnDecl, skip bool) {
 		g.definitions.write_string(s)
 		g.write(s)
 		g.nr_closures++
+		if g.pref.os == .windows {
+			g.error('closures are not yet implemented on windows', node.pos)
+		}
 	}
 	arg_str := g.out.after(arg_start_pos)
 	if node.no_body || ((g.pref.use_cache && g.pref.build_mode != .build_module) && node.is_builtin
@@ -436,7 +451,7 @@ fn (mut g Gen) c_fn_name(node &ast.FnDecl) ?string {
 		name = g.generic_fn_name(g.cur_concrete_types, name, true)
 	}
 
-	if g.pref.translated && node.attrs.contains('c') {
+	if (g.pref.translated || g.file.is_translated) && node.attrs.contains('c') {
 		// This fixes unknown symbols errors when building separate .c => .v files
 		// into .o files
 		//
@@ -537,16 +552,15 @@ fn (mut g Gen) write_defer_stmts_when_needed() {
 	}
 }
 
-// fn decl args
-fn (mut g Gen) fn_args(args []ast.Param, scope &ast.Scope) ([]string, []string, []bool) {
+fn (mut g Gen) fn_decl_params(params []ast.Param, scope &ast.Scope, is_variadic bool) ([]string, []string, []bool) {
 	mut fargs := []string{}
 	mut fargtypes := []string{}
 	mut heap_promoted := []bool{}
-	if args.len == 0 {
+	if params.len == 0 {
 		// in C, `()` is untyped, unlike `(void)`
 		g.write('void')
 	}
-	for i, arg in args {
+	for i, arg in params {
 		mut caname := if arg.name == '_' { g.new_tmp_declaration_name() } else { c_name(arg.name) }
 		typ := g.unwrap_generic(arg.typ)
 		arg_type_sym := g.table.sym(typ)
@@ -556,7 +570,7 @@ fn (mut g Gen) fn_args(args []ast.Param, scope &ast.Scope) ([]string, []string, 
 			func := info.func
 			g.write('${g.typ(func.return_type)} (*$caname)(')
 			g.definitions.write_string('${g.typ(func.return_type)} (*$caname)(')
-			g.fn_args(func.params, voidptr(0))
+			g.fn_decl_params(func.params, voidptr(0), func.is_variadic)
 			g.write(')')
 			g.definitions.write_string(')')
 			fargs << caname
@@ -586,10 +600,14 @@ fn (mut g Gen) fn_args(args []ast.Param, scope &ast.Scope) ([]string, []string, 
 			fargtypes << arg_type_name
 			heap_promoted << heap_prom
 		}
-		if i < args.len - 1 {
+		if i < params.len - 1 {
 			g.write(', ')
 			g.definitions.write_string(', ')
 		}
+	}
+	if g.pref.translated && is_variadic {
+		g.write(', ...')
+		g.definitions.write_string(', ...')
 	}
 	return fargs, fargtypes, heap_promoted
 }
@@ -905,7 +923,7 @@ fn (mut g Gen) method_call(node ast.CallExpr) {
 		if rec_type.has_flag(.shared_f) {
 			rec_type = rec_type.clear_flag(.shared_f).set_nr_muls(0)
 		}
-		g.gen_free_method_for_type(rec_type)
+		g.get_free_method(rec_type)
 	}
 	mut has_cast := false
 	if left_sym.kind == .map && node.name in ['clone', 'move'] {
@@ -1112,7 +1130,27 @@ fn (mut g Gen) fn_call(node ast.CallExpr) {
 		} else {
 			g.write('.')
 		}
+		for embed in node.from_embed_types {
+			embed_sym := g.table.sym(embed)
+			embed_name := embed_sym.embed_name()
+			g.write(embed_name)
+			if embed.is_ptr() {
+				g.write('->')
+			} else {
+				g.write('.')
+			}
+		}
 		is_selector_call = true
+	}
+	if g.inside_comptime_for_field {
+		mut node_ := unsafe { node }
+		for i, mut call_arg in node_.args {
+			if mut call_arg.expr is ast.Ident {
+				if mut call_arg.expr.obj is ast.Var {
+					node_.args[i].typ = call_arg.expr.obj.typ
+				}
+			}
+		}
 	}
 	mut name := node.name
 	is_print := name in ['print', 'println', 'eprint', 'eprintln', 'panic']
@@ -1176,7 +1214,7 @@ fn (mut g Gen) fn_call(node ast.CallExpr) {
 	} else {
 		name = c_name(name)
 	}
-	if g.pref.translated {
+	if g.pref.translated || g.file.is_translated {
 		// For `[c: 'P_TryMove'] fn p_trymove( ... `
 		// every time `p_trymove` is called, `P_TryMove` must be generated instead.
 		if f := g.table.find_fn(node.name) {
@@ -1195,14 +1233,22 @@ fn (mut g Gen) fn_call(node ast.CallExpr) {
 		}
 	}
 	if !is_selector_call {
-		name = g.generic_fn_name(node.concrete_types, name, false)
+		if func := g.table.find_fn(node.name) {
+			if func.generic_names.len > 0 {
+				if g.comptime_for_field_type != 0 && g.inside_comptime_for_field {
+					name = g.generic_fn_name([g.comptime_for_field_type], name, false)
+				} else {
+					name = g.generic_fn_name(node.concrete_types, name, false)
+				}
+			}
+		}
 	}
 	// TODO2
 	// cgen shouldn't modify ast nodes, this should be moved
 	// g.generate_tmp_autofree_arg_vars(node, name)
 	// Handle `print(x)`
 	mut print_auto_str := false
-	if is_print && (node.args[0].typ != ast.string_type || g.comptime_for_method.len > 0) { // && !free_tmp_arg_vars {
+	if is_print && (node.args[0].typ != ast.string_type || g.comptime_for_method.len > 0) {
 		mut typ := node.args[0].typ
 		if typ == 0 {
 			g.checker_bug('print arg.typ is 0', node.pos)
@@ -1573,7 +1619,7 @@ fn (mut g Gen) call_args(node ast.CallExpr) {
 			}
 		}
 		elem_type := g.typ(arr_info.elem_type)
-		if g.pref.translated && args.len == 1 {
+		if (g.pref.translated || g.file.is_translated) && args.len == 1 {
 			// Handle `foo(c'str')` for `fn foo(args ...&u8)`
 			// TODOC2V handle this in a better place
 			// println(g.table.type_to_str(args[0].typ))

@@ -1071,9 +1071,9 @@ pub fn (mut f Fmt) interface_decl(node ast.InterfaceDecl) {
 		f.writeln('')
 	}
 	f.comments_before_field(node.pre_comments)
-	for iface in node.ifaces {
-		f.write('\t$iface.name')
-		f.comments(iface.comments, inline: true, has_nl: false, level: .indent)
+	for embed in node.embeds {
+		f.write('\t$embed.name')
+		f.comments(embed.comments, inline: true, has_nl: false, level: .indent)
 		f.writeln('')
 	}
 	immut_fields := if node.mut_pos < 0 { node.fields } else { node.fields[..node.mut_pos] }
@@ -2097,23 +2097,38 @@ pub fn (mut f Fmt) map_init(node ast.MapInit) {
 			f.mark_types_import_as_used(info.key_type)
 			f.write(f.table.type_to_str_using_aliases(node.typ, f.mod2alias))
 		}
-		f.write('{}')
+		if node.pos.line_nr == node.pos.last_line {
+			f.write('{}')
+		} else {
+			f.writeln('{')
+			f.comments(node.pre_cmnts, level: .indent)
+			f.write('}')
+		}
 		return
 	}
 	f.writeln('{')
 	f.indent++
 	f.comments(node.pre_cmnts)
 	mut max_field_len := 0
+	mut skeys := []string{}
 	for key in node.keys {
-		if key.str().len > max_field_len {
-			max_field_len = key.str().len
+		skey := f.node_str(key).trim_space()
+		skeys << skey
+		if skey.len > max_field_len {
+			max_field_len = skey.len
 		}
 	}
 	for i, key in node.keys {
-		f.expr(key)
+		skey := skeys[i]
+		f.write(skey)
 		f.write(': ')
-		f.write(strings.repeat(` `, max_field_len - key.str().len))
+		f.write(strings.repeat(` `, max_field_len - skey.len))
 		f.expr(node.vals[i])
+		if key is ast.EnumVal && skey.starts_with('.') {
+			// enforce the use of `,` for maps with short enum keys, otherwise there is ambiguity
+			// when the values are struct values, and the code will no longer parse properly
+			f.write(',')
+		}
 		f.comments(node.comments[i], prev_line: node.vals[i].pos().last_line, has_nl: false)
 		f.writeln('')
 	}
