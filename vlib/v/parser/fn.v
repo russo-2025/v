@@ -402,7 +402,7 @@ fn (mut p Parser) fn_decl() ast.FnDecl {
 			receiver_type: rec.typ
 			//
 			attrs: p.attrs
-			is_conditional: conditional_ctdefine_idx != -1
+			is_conditional: conditional_ctdefine_idx != ast.invalid_type_idx
 			ctdefine_idx: conditional_ctdefine_idx
 			//
 			no_body: no_body
@@ -451,7 +451,7 @@ fn (mut p Parser) fn_decl() ast.FnDecl {
 			is_method: false
 			//
 			attrs: p.attrs
-			is_conditional: conditional_ctdefine_idx != -1
+			is_conditional: conditional_ctdefine_idx != ast.invalid_type_idx
 			ctdefine_idx: conditional_ctdefine_idx
 			//
 			no_body: no_body
@@ -506,7 +506,7 @@ fn (mut p Parser) fn_decl() ast.FnDecl {
 		is_markused: is_markused
 		//
 		attrs: p.attrs
-		is_conditional: conditional_ctdefine_idx != -1
+		is_conditional: conditional_ctdefine_idx != ast.invalid_type_idx
 		ctdefine_idx: conditional_ctdefine_idx
 		//
 		receiver: ast.StructField{
@@ -527,6 +527,7 @@ fn (mut p Parser) fn_decl() ast.FnDecl {
 		is_builtin: p.builtin_mod || p.mod in util.builtin_module_parts
 		scope: p.scope
 		label_names: p.label_names
+		end_comments: p.eat_comments(same_line: true)
 	}
 	if generic_names.len > 0 {
 		p.table.register_fn_generic_types(fn_decl.fkey())

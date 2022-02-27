@@ -69,6 +69,8 @@ pub fn (mut t Table) free() {
 	}
 }
 
+pub const invalid_type_idx = -1
+
 pub type FnPanicHandler = fn (&Table, string)
 
 fn default_table_panic_handler(t &Table, message string) {
@@ -685,8 +687,8 @@ pub fn (t &Table) find_sym_and_type_idx(name string) (&TypeSymbol, int) {
 }
 
 pub const invalid_type_symbol = &TypeSymbol{
-	idx: -1
-	parent_idx: -1
+	idx: invalid_type_idx
+	parent_idx: invalid_type_idx
 	language: .v
 	mod: 'builtin'
 	kind: .placeholder
@@ -786,7 +788,7 @@ fn (mut t Table) rewrite_already_registered_symbol(typ TypeSymbol, existing_idx 
 		}
 		return existing_idx
 	}
-	return -1
+	return ast.invalid_type_idx
 }
 
 [inline]
@@ -2041,6 +2043,52 @@ pub fn (mut t Table) generic_insts_to_concrete() {
 				}
 				else {}
 			}
+		}
+	}
+}
+
+pub fn (t &Table) is_comptime_type(x Type, y ComptimeType) bool {
+	x_kind := t.type_kind(x)
+	match y.kind {
+		.map_ {
+			return x_kind == .map
+		}
+		.int {
+			return x_kind in [
+				.i8,
+				.i16,
+				.int,
+				.i64,
+				.byte,
+				.u8,
+				.u16,
+				.u32,
+				.u64,
+				.usize,
+				.int_literal,
+			]
+		}
+		.float {
+			return x_kind in [
+				.f32,
+				.f64,
+				.float_literal,
+			]
+		}
+		.struct_ {
+			return x_kind == .struct_
+		}
+		.iface {
+			return x_kind == .interface_
+		}
+		.array {
+			return x_kind in [.array, .array_fixed]
+		}
+		.sum_type {
+			return x_kind == .sum_type
+		}
+		.enum_ {
+			return x_kind == .enum_
 		}
 	}
 }

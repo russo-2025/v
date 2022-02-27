@@ -2105,6 +2105,11 @@ pub fn (mut p Parser) name_expr() ast.Expr {
 	prev_tok_kind := p.prev_tok.kind
 	mut node := ast.empty_expr()
 	if p.expecting_type {
+		if p.tok.kind == .dollar {
+			node = p.parse_comptime_type()
+			p.expecting_type = false
+			return node
+		}
 		p.expecting_type = false
 		// get type position before moving to next
 		type_pos := p.tok.pos()
@@ -2694,6 +2699,10 @@ fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
 		// `foo()?`
 		if p.tok.kind == .question {
 			p.next()
+			if p.inside_defer {
+				p.error_with_pos('error propagation not allowed inside `defer` blocks',
+					p.prev_tok.pos())
+			}
 			or_kind = .propagate
 		}
 		//
@@ -3283,6 +3292,8 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 	p.top_level_statement_end()
 	if is_block {
 		p.check(.rpar)
+	} else {
+		comments << p.eat_comments(same_line: true)
 	}
 	return ast.ConstDecl{
 		pos: start_pos.extend_with_last_line(const_pos, p.prev_tok.line_nr)
@@ -3605,7 +3616,7 @@ fn (mut p Parser) type_decl() ast.TypeDecl {
 			}
 			is_public: is_pub
 		})
-		if typ == -1 {
+		if typ == ast.invalid_type_idx {
 			p.error_with_pos('cannot register sum type `$name`, another type with this name exists',
 				name_pos)
 			return ast.SumTypeDecl{}
@@ -3646,7 +3657,7 @@ fn (mut p Parser) type_decl() ast.TypeDecl {
 		is_public: is_pub
 	})
 	type_end_pos := p.prev_tok.pos()
-	if idx == -1 {
+	if idx == ast.invalid_type_idx {
 		p.error_with_pos('cannot register alias `$name`, another type with this name exists',
 			name_pos)
 		return ast.AliasTypeDecl{}

@@ -1534,6 +1534,9 @@ fn (mut g Gen) write_v_source_line_info(pos token.Pos) {
 	if g.inside_ternary == 0 && g.pref.is_vlines && g.is_vlines_enabled {
 		nline := pos.line_nr + 1
 		lineinfo := '\n#line $nline "$g.vlines_path"'
+		$if trace_gen_source_line_info ? {
+			eprintln('> lineinfo: ${lineinfo.replace('\n', '')}')
+		}
 		g.writeln(lineinfo)
 	}
 }
@@ -2740,6 +2743,9 @@ fn (mut g Gen) expr(node ast.Expr) {
 	}
 	// NB: please keep the type names in the match here in alphabetical order:
 	match mut node {
+		ast.ComptimeType {
+			g.error('g.expr(): Unhandled ComptimeType', node.pos)
+		}
 		ast.EmptyExpr {
 			g.error('g.expr(): unhandled EmptyExpr', token.Pos{})
 		}
@@ -3852,7 +3858,7 @@ fn (mut g Gen) return_stmt(node ast.Return) {
 		return
 	}
 	tmpvar := g.new_tmp_var()
-	ret_typ := g.typ(g.fn_decl.return_type)
+	ret_typ := g.typ(g.unwrap_generic(g.fn_decl.return_type))
 	mut use_tmp_var := g.defer_stmts.len > 0 || g.defer_profile_code.len > 0
 	// handle promoting none/error/function returning 'Option'
 	if fn_return_is_optional {
@@ -5632,6 +5638,9 @@ static inline __shared__$interface_name ${shared_fn_name}(__shared__$cctype* x) 
 							} else {
 								methods_wrapper.write_string('.$esym.embed_name()')
 							}
+						}
+						if fargs.len > 1 {
+							methods_wrapper.write_string(', ')
 						}
 						methods_wrapper.writeln('${fargs[1..].join(', ')});')
 					} else {
