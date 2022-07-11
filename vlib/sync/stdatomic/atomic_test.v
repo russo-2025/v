@@ -18,7 +18,7 @@ fn test_count_10_times_1_cycle_should_result_10_cycles_with_sync() {
 		go count_one_cycle(mut counter, mut wg)
 	}
 	wg.wait()
-	assert counter.counter == desired_iterations
+	assert counter.counter == u64(desired_iterations)
 	eprintln('   with synchronization the counter is: ${counter.counter:10} , expectedly == ${desired_iterations:10}')
 }
 
@@ -32,7 +32,7 @@ fn test_count_10_times_1_cycle_should_not_be_10_cycles_without_sync() {
 		go count_one_cycle_without_sync(mut counter, mut wg)
 	}
 	wg.wait()
-	// NB: we do not assert here, just print, because sometimes by chance counter.counter may be == desired_iterations
+	// Note: we do not assert here, just print, because sometimes by chance counter.counter may be == desired_iterations
 	eprintln('without synchronization the counter is: ${counter.counter:10} , expectedly != ${desired_iterations:10}')
 }
 

@@ -93,6 +93,14 @@ fn (mut v Builder) post_process_c_compiler_output(res os.Result) {
 		}
 		return
 	}
+	if res.exit_code != 0 && v.pref.gc_mode != .no_gc && res.output.contains('libgc.a')
+		&& !v.pref.is_o {
+		$if windows {
+			verror(r'Your V installation may be out-of-date. Try removing `thirdparty\tcc\` and running `.\make.bat`')
+		} $else {
+			verror('Your V installation may be out-of-date. Try removing `thirdparty/tcc/` and running `make`')
+		}
+	}
 	for emsg_marker in [builder.c_verror_message_marker, 'error: include file '] {
 		if res.output.contains(emsg_marker) {
 			emessage := res.output.all_after(emsg_marker).all_before('\n').all_before('\r').trim_right('\r\n')
@@ -139,6 +147,7 @@ mut:
 	debug_mode  bool
 	is_cc_tcc   bool
 	is_cc_gcc   bool
+	is_cc_icc   bool
 	is_cc_msvc  bool
 	is_cc_clang bool
 	//
@@ -203,6 +212,17 @@ fn (mut v Builder) setup_ccompiler_options(ccompiler string) {
 	if v.pref.os == .ios {
 		ccoptions.args << '-fobjc-arc'
 	}
+	if v.pref.os == .macos && os.exists('/opt/procursus') {
+		ccoptions.linker_flags << '-Wl,-rpath,/opt/procursus/lib'
+	}
+	mut user_darwin_version := 999_999_999
+	mut user_darwin_ppc := false
+	$if macos {
+		user_darwin_version = os.uname().release.split('.')[0].int()
+		if os.uname().machine == 'Power Macintosh' {
+			user_darwin_ppc = true
+		}
+	}
 	ccoptions.debug_mode = v.pref.is_debug
 	ccoptions.guessed_compiler = v.pref.ccompiler
 	if ccoptions.guessed_compiler == 'cc' && v.pref.is_prod {
@@ -221,6 +241,7 @@ fn (mut v Builder) setup_ccompiler_options(ccompiler string) {
 	//
 	ccoptions.is_cc_tcc = ccompiler.contains('tcc') || ccoptions.guessed_compiler == 'tcc'
 	ccoptions.is_cc_gcc = ccompiler.contains('gcc') || ccoptions.guessed_compiler == 'gcc'
+	ccoptions.is_cc_icc = ccompiler.contains('icc') || ccoptions.guessed_compiler == 'icc'
 	ccoptions.is_cc_msvc = ccompiler.contains('msvc') || ccoptions.guessed_compiler == 'msvc'
 	ccoptions.is_cc_clang = ccompiler.contains('clang') || ccoptions.guessed_compiler == 'clang'
 	// For C++ we must be very tolerant
@@ -249,9 +270,21 @@ fn (mut v Builder) setup_ccompiler_options(ccompiler string) {
 	}
 	if ccoptions.is_cc_gcc {
 		if ccoptions.debug_mode {
-			debug_options = ['-g', '-no-pie']
+			debug_options = ['-g']
+			if user_darwin_version > 9 {
+				debug_options << '-no-pie'
+			}
 		}
 		optimization_options = ['-O3', '-fno-strict-aliasing', '-flto']
+	}
+	if ccoptions.is_cc_icc {
+		if ccoptions.debug_mode {
+			debug_options = ['-g']
+			if user_darwin_version > 9 {
+				debug_options << '-no-pie'
+			}
+		}
+		optimization_options = ['-Ofast', '-fno-strict-aliasing']
 	}
 	//
 	if ccoptions.debug_mode {
@@ -276,6 +309,9 @@ fn (mut v Builder) setup_ccompiler_options(ccompiler string) {
 	}
 	if v.pref.sanitize {
 		ccoptions.args << '-fsanitize=leak'
+	}
+	if v.pref.is_o {
+		ccoptions.args << '-c'
 	}
 	//
 	ccoptions.shared_postfix = '.so'
@@ -331,7 +367,7 @@ fn (mut v Builder) setup_ccompiler_options(ccompiler string) {
 	}
 	// macOS code can include objective C  TODO remove once objective C is replaced with C
 	if v.pref.os == .macos || v.pref.os == .ios {
-		if !ccoptions.is_cc_tcc {
+		if !ccoptions.is_cc_tcc && !user_darwin_ppc {
 			ccoptions.source_args << '-x objective-c'
 		}
 	}
@@ -344,7 +380,11 @@ fn (mut v Builder) setup_ccompiler_options(ccompiler string) {
 	if v.pref.os == .macos {
 		ccoptions.post_args << '-mmacosx-version-min=10.7'
 	} else if v.pref.os == .ios {
-		ccoptions.post_args << '-miphoneos-version-min=10.0'
+		if v.pref.is_ios_simulator {
+			ccoptions.post_args << '-miphonesimulator-version-min=10.0'
+		} else {
+			ccoptions.post_args << '-miphoneos-version-min=10.0'
+		}
 	} else if v.pref.os == .windows {
 		ccoptions.post_args << '-municode'
 	}
@@ -400,6 +440,21 @@ fn (v &Builder) all_args(ccoptions CcompilerOptions) []string {
 	}
 	all << ccoptions.args
 	all << ccoptions.o_args
+	$if windows {
+		// Adding default options for tcc, gcc and clang as done in msvc.v.
+		// This is done before pre_args is added so that it can be overwritten if needed.
+		// -Wl,-stack=16777216 == /F 16777216
+		// -Werror=implicit-function-declaration == /we4013
+		// /volatile:ms - there seems to be no equivalent,
+		// normally msvc should use /volatile:iso
+		// but it could have an impact on vinix if it is created with msvc.
+		if !ccoptions.is_cc_msvc {
+			all << '-Wl,-stack=16777216'
+			if !v.pref.is_cstrict {
+				all << '-Werror=implicit-function-declaration'
+			}
+		}
+	}
 	all << ccoptions.pre_args
 	all << ccoptions.source_args
 	all << ccoptions.post_args
@@ -448,17 +503,6 @@ fn (mut v Builder) setup_output_name() {
 		verror("'$v.pref.out_name' is a directory")
 	}
 	v.ccoptions.o_args << '-o "$v.pref.out_name"'
-}
-
-fn (mut v Builder) dump_c_options(all_args []string) {
-	if v.pref.dump_c_flags != '' {
-		non_empty_args := all_args.filter(it != '').join('\n') + '\n'
-		if v.pref.dump_c_flags == '-' {
-			print(non_empty_args)
-		} else {
-			os.write_file(v.pref.dump_c_flags, non_empty_args) or { panic(err) }
-		}
-	}
 }
 
 pub fn (mut v Builder) cc() {
@@ -523,18 +567,8 @@ pub fn (mut v Builder) cc() {
 		// try to compile with the choosen compiler
 		// if compilation fails, retry again with another
 		mut ccompiler := v.pref.ccompiler
-		if v.pref.os == .ios {
-			ios_sdk := if v.pref.is_ios_simulator { 'iphonesimulator' } else { 'iphoneos' }
-			ios_sdk_path_res := os.execute_or_exit('xcrun --sdk $ios_sdk --show-sdk-path')
-			mut isysroot := ios_sdk_path_res.output.replace('\n', '')
-			arch := if v.pref.is_ios_simulator {
-				'-arch x86_64'
-			} else {
-				'-arch armv7 -arch armv7s -arch arm64'
-			}
-			ccompiler = 'xcrun --sdk iphoneos clang -isysroot $isysroot $arch'
-		} else if v.pref.os == .wasm32 {
-			ccompiler = 'clang-12'
+		if v.pref.os == .wasm32 {
+			ccompiler = 'clang'
 		}
 		v.setup_ccompiler_options(ccompiler)
 		v.build_thirdparty_obj_files()
@@ -619,7 +653,7 @@ pub fn (mut v Builder) cc() {
 				}
 				if v.pref.retry_compilation {
 					tcc_output = res
-					v.pref.ccompiler = pref.default_c_compiler()
+					v.pref.default_c_compiler()
 					if v.pref.is_verbose {
 						eprintln('Compilation with tcc failed. Retrying with $v.pref.ccompiler ...')
 					}
@@ -653,16 +687,12 @@ pub fn (mut v Builder) cc() {
 		break
 	}
 	if v.pref.compress {
-		$if windows {
-			println('-compress does not work on Windows for now')
-			return
-		}
 		ret := os.system('strip $v.pref.out_name')
 		if ret != 0 {
 			println('strip failed')
 			return
 		}
-		// NB: upx --lzma can sometimes fail with NotCompressibleException
+		// Note: upx --lzma can sometimes fail with NotCompressibleException
 		// See https://github.com/vlang/v/pull/3528
 		mut ret2 := os.system('upx --lzma -qqq $v.pref.out_name')
 		if ret2 != 0 {
@@ -677,7 +707,7 @@ pub fn (mut v Builder) cc() {
 				println('install upx\n' + 'for example, on Debian/Ubuntu run `sudo apt install upx`')
 			}
 			$if windows {
-				// :)
+				println('install upx')
 			}
 		}
 	}
@@ -731,7 +761,13 @@ fn (mut b Builder) cc_linux_cross() {
 	cc_args << '-c "$b.out_name_c"'
 	cc_args << libs
 	b.dump_c_options(cc_args)
-	cc_cmd := '${os.quoted_path('cc')} ' + cc_args.join(' ')
+	mut cc_name := 'cc'
+	mut out_name := b.pref.out_name
+	$if windows {
+		cc_name = 'clang.exe'
+		out_name = out_name.trim_string_right('.exe')
+	}
+	cc_cmd := '${os.quoted_path(cc_name)} ' + cc_args.join(' ')
 	if b.pref.show_cc {
 		println(cc_cmd)
 	}
@@ -742,14 +778,17 @@ fn (mut b Builder) cc_linux_cross() {
 		return
 	}
 	mut linker_args := ['-L$sysroot/usr/lib/x86_64-linux-gnu/', '-L$sysroot/lib/x86_64-linux-gnu',
-		'--sysroot=$sysroot', '-v', '-o $b.pref.out_name', '-m elf_x86_64',
+		'--sysroot=$sysroot', '-v', '-o $out_name', '-m elf_x86_64',
 		'-dynamic-linker /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2',
 		'$sysroot/crt1.o $sysroot/crti.o $obj_file', '-lc', '-lcrypto', '-lssl', '-lpthread',
 		'$sysroot/crtn.o', '-lm']
 	linker_args << cflags.c_options_only_object_files()
 	// -ldl
 	b.dump_c_options(linker_args)
-	ldlld := '$sysroot/ld.lld'
+	mut ldlld := '$sysroot/ld.lld'
+	$if windows {
+		ldlld = 'ld.lld.exe'
+	}
 	linker_cmd := '${os.quoted_path(ldlld)} ' + linker_args.join(' ')
 	// s = s.replace('SYSROOT', sysroot) // TODO $ inter bug
 	// s = s.replace('-o hi', '-o ' + c.pref.out_name)
@@ -762,7 +801,7 @@ fn (mut b Builder) cc_linux_cross() {
 		verror(res.output)
 		return
 	}
-	println(b.pref.out_name + ' has been successfully compiled')
+	println(out_name + ' has been successfully compiled')
 }
 
 fn (mut c Builder) cc_windows_cross() {
@@ -843,7 +882,7 @@ fn (mut c Builder) cc_windows_cross() {
 	all_args << args
 	all_args << '-municode'
 	c.dump_c_options(all_args)
-	mut cmd := pref.vcross_compiler_name(pref.cc_to_windows) + ' ' + all_args.join(' ')
+	mut cmd := c.pref.vcross_compiler_name() + ' ' + all_args.join(' ')
 	// cmd := 'clang -o $obj_name -w $include -m32 -c -target x86_64-win32 ${pref.default_module_path}/$c.out_name_c'
 	if c.pref.is_verbose || c.pref.show_cc {
 		println(cmd)

@@ -44,14 +44,16 @@ fn main() {
 		global_config: config
 	}
 	eprintln('>> webserver: started on http://localhost:$app.port/ , with maximum runtime of $app.timeout milliseconds.')
-	vweb.run_at(app, host: 'localhost', port: http_port, family: .ip) ?
+	vweb.run_at(app, host: 'localhost', port: http_port, family: .ip)?
 }
 
 // pub fn (mut app App) init_server() {
 //}
 
 pub fn (mut app App) index() vweb.Result {
-	assert app.global_config.max_ping == 50
+	rlock app.global_config {
+		assert app.global_config.max_ping == 50
+	}
 	return app.text('Welcome to VWeb')
 }
 

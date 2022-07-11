@@ -22,7 +22,8 @@ pub mut:
 
 [flag]
 pub enum ArrayFlags {
-	noslices
+	noslices // when <<, `.noslices` will free the old data block immediately (you have to be sure, that there are *no slices* to that specific array). TODO: integrate with reference counting/compiler support for the static cases.
+	noshrink // when `.noslices` and `.noshrink` are *both set*, .delete(x) will NOT allocate new memory and free the old. It will just move the elements in place, and adjust .len.
 }
 
 // Internal function, used by V (`nums := []int`)
@@ -30,7 +31,7 @@ fn __new_array(mylen int, cap int, elm_size int) array {
 	cap_ := if cap < mylen { mylen } else { cap }
 	arr := array{
 		element_size: elm_size
-		data: vcalloc(cap_ * elm_size)
+		data: vcalloc(u64(cap_) * u64(elm_size))
 		len: mylen
 		cap: cap_
 	}
@@ -44,14 +45,19 @@ fn __new_array_with_default(mylen int, cap int, elm_size int, val voidptr) array
 		len: mylen
 		cap: cap_
 	}
+	total_size := u64(cap_) * u64(elm_size)
 	if cap_ > 0 && mylen == 0 {
-		arr.data = unsafe { malloc(cap_ * elm_size) }
+		arr.data = unsafe { malloc(total_size) }
 	} else {
-		arr.data = vcalloc(cap_ * elm_size)
+		arr.data = vcalloc(total_size)
 	}
 	if val != 0 {
-		for i in 0 .. arr.len {
-			unsafe { arr.set_unsafe(i, val) }
+		mut eptr := &u8(arr.data)
+		unsafe {
+			for _ in 0 .. arr.len {
+				vmemcpy(eptr, val, arr.element_size)
+				eptr += arr.element_size
+			}
 		}
 	}
 	return arr
@@ -61,13 +67,17 @@ fn __new_array_with_array_default(mylen int, cap int, elm_size int, val array) a
 	cap_ := if cap < mylen { mylen } else { cap }
 	mut arr := array{
 		element_size: elm_size
-		data: unsafe { malloc(cap_ * elm_size) }
+		data: unsafe { malloc(u64(cap_) * u64(elm_size)) }
 		len: mylen
 		cap: cap_
 	}
-	for i in 0 .. arr.len {
-		val_clone := unsafe { val.clone_to_depth(1) }
-		unsafe { arr.set_unsafe(i, &val_clone) }
+	mut eptr := &u8(arr.data)
+	unsafe {
+		for _ in 0 .. arr.len {
+			val_clone := val.clone_to_depth(1)
+			vmemcpy(eptr, &val_clone, arr.element_size)
+			eptr += arr.element_size
+		}
 	}
 	return arr
 }
@@ -76,13 +86,17 @@ fn __new_array_with_map_default(mylen int, cap int, elm_size int, val map) array
 	cap_ := if cap < mylen { mylen } else { cap }
 	mut arr := array{
 		element_size: elm_size
-		data: unsafe { malloc(cap_ * elm_size) }
+		data: unsafe { malloc(u64(cap_) * u64(elm_size)) }
 		len: mylen
 		cap: cap_
 	}
-	for i in 0 .. arr.len {
-		val_clone := unsafe { val.clone() }
-		unsafe { arr.set_unsafe(i, &val_clone) }
+	mut eptr := &u8(arr.data)
+	unsafe {
+		for _ in 0 .. arr.len {
+			val_clone := val.clone()
+			vmemcpy(eptr, &val_clone, arr.element_size)
+			eptr += arr.element_size
+		}
 	}
 	return arr
 }
@@ -92,12 +106,12 @@ fn new_array_from_c_array(len int, cap int, elm_size int, c_array voidptr) array
 	cap_ := if cap < len { len } else { cap }
 	arr := array{
 		element_size: elm_size
-		data: vcalloc(cap_ * elm_size)
+		data: vcalloc(u64(cap_) * u64(elm_size))
 		len: len
 		cap: cap_
 	}
 	// TODO Write all memory functions (like memcpy) in V
-	unsafe { vmemcpy(arr.data, c_array, len * elm_size) }
+	unsafe { vmemcpy(arr.data, c_array, u64(len) * u64(elm_size)) }
 	return arr
 }
 
@@ -123,10 +137,10 @@ fn (mut a array) ensure_cap(required int) {
 	for required > cap {
 		cap *= 2
 	}
-	new_size := cap * a.element_size
-	new_data := vcalloc(new_size)
+	new_size := u64(cap) * u64(a.element_size)
+	new_data := unsafe { malloc(new_size) }
 	if a.data != voidptr(0) {
-		unsafe { vmemcpy(new_data, a.data, a.len * a.element_size) }
+		unsafe { vmemcpy(new_data, a.data, u64(a.len) * u64(a.element_size)) }
 		// TODO: the old data may be leaked when no GC is used (ref-counting?)
 		if a.flags.has(.noslices) {
 			unsafe {
@@ -152,14 +166,14 @@ pub fn (a array) repeat(count int) array {
 // multi-dimensional arrays.
 //
 // It is `unsafe` to call directly because `depth` is not checked
-[unsafe]
+[direct_array_access; unsafe]
 pub fn (a array) repeat_to_depth(count int, depth int) array {
 	if count < 0 {
 		panic('array.repeat: count is negative: $count')
 	}
-	mut size := count * a.len * a.element_size
+	mut size := u64(count) * u64(a.len) * u64(a.element_size)
 	if size == 0 {
-		size = a.element_size
+		size = u64(a.element_size)
 	}
 	arr := array{
 		element_size: a.element_size
@@ -168,12 +182,18 @@ pub fn (a array) repeat_to_depth(count int, depth int) array {
 		cap: count * a.len
 	}
 	if a.len > 0 {
-		for i in 0 .. count {
-			if depth > 0 {
-				ary_clone := unsafe { a.clone_to_depth(depth) }
-				unsafe { vmemcpy(arr.get_unsafe(i * a.len), &byte(ary_clone.data), a.len * a.element_size) }
-			} else {
-				unsafe { vmemcpy(arr.get_unsafe(i * a.len), &byte(a.data), a.len * a.element_size) }
+		a_total_size := u64(a.len) * u64(a.element_size)
+		arr_step_size := u64(a.len) * u64(arr.element_size)
+		mut eptr := &u8(arr.data)
+		unsafe {
+			for _ in 0 .. count {
+				if depth > 0 {
+					ary_clone := a.clone_to_depth(depth)
+					vmemcpy(eptr, &u8(ary_clone.data), a_total_size)
+				} else {
+					vmemcpy(eptr, &u8(a.data), a_total_size)
+				}
+				eptr += arr_step_size
 			}
 		}
 	}
@@ -208,7 +228,7 @@ pub fn (mut a array) insert(i int, val voidptr) {
 		a.ensure_cap(a.len + 1)
 	}
 	unsafe {
-		vmemmove(a.get_unsafe(i + 1), a.get_unsafe(i), (a.len - i) * a.element_size)
+		vmemmove(a.get_unsafe(i + 1), a.get_unsafe(i), u64((a.len - i)) * u64(a.element_size))
 		a.set_unsafe(i, val)
 	}
 	a.len++
@@ -227,8 +247,8 @@ fn (mut a array) insert_many(i int, val voidptr, size int) {
 	elem_size := a.element_size
 	unsafe {
 		iptr := a.get_unsafe(i)
-		vmemmove(a.get_unsafe(i + size), iptr, (a.len - i) * elem_size)
-		vmemcpy(iptr, val, size * elem_size)
+		vmemmove(a.get_unsafe(i + size), iptr, u64(a.len - i) * u64(elem_size))
+		vmemcpy(iptr, val, u64(size) * u64(elem_size))
 	}
 	a.len += size
 }
@@ -283,16 +303,24 @@ pub fn (mut a array) delete_many(i int, size int) {
 			panic('array.delete: index out of range (i == $i$endidx, a.len == $a.len)')
 		}
 	}
-	// NB: if a is [12,34], a.len = 2, a.delete(0)
+	if a.flags.all(.noshrink | .noslices) {
+		unsafe {
+			vmemmove(&u8(a.data) + u64(i) * u64(a.element_size), &u8(a.data) + u64(i +
+				size) * u64(a.element_size), u64(a.len - i - size) * u64(a.element_size))
+		}
+		a.len -= size
+		return
+	}
+	// Note: if a is [12,34], a.len = 2, a.delete(0)
 	// should move (2-0-1) elements = 1 element (the 34) forward
 	old_data := a.data
 	new_size := a.len - size
 	new_cap := if new_size == 0 { 1 } else { new_size }
-	a.data = vcalloc(new_cap * a.element_size)
-	unsafe { vmemcpy(a.data, old_data, i * a.element_size) }
+	a.data = vcalloc(u64(new_cap) * u64(a.element_size))
+	unsafe { vmemcpy(a.data, old_data, u64(i) * u64(a.element_size)) }
 	unsafe {
-		vmemcpy(&byte(a.data) + i * a.element_size, &byte(old_data) + (i + size) * a.element_size,
-			(a.len - i - size) * a.element_size)
+		vmemcpy(&u8(a.data) + u64(i) * u64(a.element_size), &u8(old_data) + u64(i +
+			size) * u64(a.element_size), u64(a.len - i - size) * u64(a.element_size))
 	}
 	if a.flags.has(.noslices) {
 		unsafe {
@@ -319,11 +347,33 @@ pub fn (mut a array) trim(index int) {
 	}
 }
 
+// drop advances the array past the first `num` elements whilst preserving spare capacity.
+// If `num` is greater than `len` the array will be emptied.
+// Example:
+// ```v
+// mut a := [1,2]
+// a << 3
+// a.drop(2)
+// assert a == [3]
+// assert a.cap > a.len
+// ```
+pub fn (mut a array) drop(num int) {
+	if num <= 0 {
+		return
+	}
+	n := if num <= a.len { num } else { a.len }
+	blen := u64(n) * u64(a.element_size)
+	a.data = unsafe { &u8(a.data) + blen }
+	a.offset += int(blen) // TODO: offset should become 64bit as well
+	a.len -= n
+	a.cap -= n
+}
+
 // we manually inline this for single operations for performance without -prod
 [inline; unsafe]
 fn (a array) get_unsafe(i int) voidptr {
 	unsafe {
-		return &byte(a.data) + i * a.element_size
+		return &u8(a.data) + u64(i) * u64(a.element_size)
 	}
 }
 
@@ -335,7 +385,7 @@ fn (a array) get(i int) voidptr {
 		}
 	}
 	unsafe {
-		return &byte(a.data) + i * a.element_size
+		return &u8(a.data) + u64(i) * u64(a.element_size)
 	}
 }
 
@@ -345,7 +395,7 @@ fn (a array) get_with_check(i int) voidptr {
 		return 0
 	}
 	unsafe {
-		return &byte(a.data) + i * a.element_size
+		return &u8(a.data) + u64(i) * u64(a.element_size)
 	}
 }
 
@@ -371,7 +421,7 @@ pub fn (a array) last() voidptr {
 		}
 	}
 	unsafe {
-		return &byte(a.data) + (a.len - 1) * a.element_size
+		return &u8(a.data) + u64(a.len - 1) * u64(a.element_size)
 	}
 }
 
@@ -398,16 +448,17 @@ pub fn (mut a array) pop() voidptr {
 		}
 	}
 	new_len := a.len - 1
-	last_elem := unsafe { &byte(a.data) + new_len * a.element_size }
+	last_elem := unsafe { &u8(a.data) + u64(new_len) * u64(a.element_size) }
 	a.len = new_len
-	// NB: a.cap is not changed here *on purpose*, so that
+	// Note: a.cap is not changed here *on purpose*, so that
 	// further << ops on that array will be more efficient.
-	return unsafe { memdup(last_elem, a.element_size) }
+	return last_elem
 }
 
 // delete_last efficiently deletes the last element of the array.
 // It does it simply by reducing the length of the array by 1.
 // If the array is empty, this will panic.
+// See also: [trim](#array.trim)
 pub fn (mut a array) delete_last() {
 	// copy pasting code for performance
 	$if !no_bounds_checking ? {
@@ -440,13 +491,15 @@ fn (a array) slice(start int, _end int) array {
 			panic('array.slice: slice bounds out of range ($start < 0)')
 		}
 	}
-	offset := start * a.element_size
-	data := unsafe { &byte(a.data) + offset }
+	// TODO: integrate reference counting
+	// a.flags.clear(.noslices)
+	offset := u64(start) * u64(a.element_size)
+	data := unsafe { &u8(a.data) + offset }
 	l := end - start
 	res := array{
 		element_size: a.element_size
 		data: data
-		offset: a.offset + offset
+		offset: a.offset + int(offset) // TODO: offset should become 64bit
 		len: l
 		cap: l
 	}
@@ -460,6 +513,7 @@ fn (a array) slice(start int, _end int) array {
 // that get the last 3 elements of the array otherwise it return an empty array.
 // This function always return a valid array.
 fn (a array) slice_ni(_start int, _end int) array {
+	// a.flags.clear(.noslices)
 	mut end := _end
 	mut start := _start
 
@@ -491,13 +545,13 @@ fn (a array) slice_ni(_start int, _end int) array {
 		return res
 	}
 
-	offset := start * a.element_size
-	data := unsafe { &byte(a.data) + offset }
+	offset := u64(start) * u64(a.element_size)
+	data := unsafe { &u8(a.data) + offset }
 	l := end - start
 	res := array{
 		element_size: a.element_size
 		data: data
-		offset: a.offset + offset
+		offset: a.offset + int(offset) // TODO: offset should be 64bit
 		len: l
 		cap: l
 	}
@@ -527,7 +581,7 @@ pub fn (a &array) clone() array {
 // recursively clone given array - `unsafe` when called directly because depth is not checked
 [unsafe]
 pub fn (a &array) clone_to_depth(depth int) array {
-	mut size := a.cap * a.element_size
+	mut size := u64(a.cap) * u64(a.element_size)
 	if size == 0 {
 		size++
 	}
@@ -547,8 +601,8 @@ pub fn (a &array) clone_to_depth(depth int) array {
 		}
 		return arr
 	} else {
-		if !isnil(a.data) {
-			unsafe { vmemcpy(&byte(arr.data), a.data, a.cap * a.element_size) }
+		if a.data != 0 {
+			unsafe { vmemcpy(&u8(arr.data), a.data, u64(a.cap) * u64(a.element_size)) }
 		}
 		return arr
 	}
@@ -557,24 +611,24 @@ pub fn (a &array) clone_to_depth(depth int) array {
 // we manually inline this for single operations for performance without -prod
 [inline; unsafe]
 fn (mut a array) set_unsafe(i int, val voidptr) {
-	unsafe { vmemcpy(&byte(a.data) + a.element_size * i, val, a.element_size) }
+	unsafe { vmemcpy(&u8(a.data) + u64(a.element_size) * u64(i), val, a.element_size) }
 }
 
-// Private function. Used to implement assigment to the array element.
+// Private function. Used to implement assignment to the array element.
 fn (mut a array) set(i int, val voidptr) {
 	$if !no_bounds_checking ? {
 		if i < 0 || i >= a.len {
 			panic('array.set: index out of range (i == $i, a.len == $a.len)')
 		}
 	}
-	unsafe { vmemcpy(&byte(a.data) + a.element_size * i, val, a.element_size) }
+	unsafe { vmemcpy(&u8(a.data) + u64(a.element_size) * u64(i), val, a.element_size) }
 }
 
 fn (mut a array) push(val voidptr) {
 	if a.len >= a.cap {
 		a.ensure_cap(a.len + 1)
 	}
-	unsafe { vmemmove(&byte(a.data) + a.element_size * a.len, val, a.element_size) }
+	unsafe { vmemcpy(&u8(a.data) + u64(a.element_size) * u64(a.len), val, a.element_size) }
 	a.len++
 }
 
@@ -582,17 +636,19 @@ fn (mut a array) push(val voidptr) {
 // `val` is array.data and user facing usage is `a << [1,2,3]`
 [unsafe]
 pub fn (mut a3 array) push_many(val voidptr, size int) {
+	if size <= 0 || isnil(val) {
+		return
+	}
 	a3.ensure_cap(a3.len + size)
-	if a3.data == val && !isnil(a3.data) {
+	if a3.data == val && a3.data != 0 {
 		// handle `arr << arr`
 		copy := a3.clone()
 		unsafe {
-			// vmemcpy(a.data, copy.data, copy.element_size * copy.len)
-			vmemcpy(a3.get_unsafe(a3.len), copy.data, a3.element_size * size)
+			vmemcpy(&u8(a3.data) + u64(a3.element_size) * u64(a3.len), copy.data, u64(a3.element_size) * u64(size))
 		}
 	} else {
-		if !isnil(a3.data) && !isnil(val) {
-			unsafe { vmemcpy(a3.get_unsafe(a3.len), val, a3.element_size * size) }
+		if a3.data != 0 && val != 0 {
+			unsafe { vmemcpy(&u8(a3.data) + u64(a3.element_size) * u64(a3.len), val, u64(a3.element_size) * u64(size)) }
 		}
 	}
 	a3.len += size
@@ -606,10 +662,11 @@ pub fn (mut a array) reverse_in_place() {
 	unsafe {
 		mut tmp_value := malloc(a.element_size)
 		for i in 0 .. a.len / 2 {
-			vmemcpy(tmp_value, &byte(a.data) + i * a.element_size, a.element_size)
-			vmemcpy(&byte(a.data) + i * a.element_size, &byte(a.data) +
-				(a.len - 1 - i) * a.element_size, a.element_size)
-			vmemcpy(&byte(a.data) + (a.len - 1 - i) * a.element_size, tmp_value, a.element_size)
+			vmemcpy(tmp_value, &u8(a.data) + u64(i) * u64(a.element_size), a.element_size)
+			vmemcpy(&u8(a.data) + u64(i) * u64(a.element_size), &u8(a.data) +
+				u64(a.len - 1 - i) * u64(a.element_size), a.element_size)
+			vmemcpy(&u8(a.data) + u64(a.len - 1 - i) * u64(a.element_size), tmp_value,
+				a.element_size)
 		}
 		free(tmp_value)
 	}
@@ -622,7 +679,7 @@ pub fn (a array) reverse() array {
 	}
 	mut arr := array{
 		element_size: a.element_size
-		data: vcalloc(a.cap * a.element_size)
+		data: vcalloc(u64(a.cap) * u64(a.element_size))
 		len: a.len
 		cap: a.cap
 	}
@@ -641,7 +698,7 @@ pub fn (a &array) free() {
 	// if a.is_slice {
 	// return
 	// }
-	mblock_ptr := &byte(u64(a.data) - u64(a.offset))
+	mblock_ptr := &u8(u64(a.data) - u64(a.offset))
 	unsafe { free(mblock_ptr) }
 }
 
@@ -654,7 +711,17 @@ pub fn (a &array) free() {
 // Ignore the function signature. `filter` does not take an actual callback. Rather, it
 // takes an `it` expression.
 //
-// Example: array.filter(it % 2 == 1) // will yield a new array of only odd elements
+// Certain array functions (`filter` `any` `all`) support a simplified
+// domain-specific-language by the backend compiler to make these operations
+// more idiomatic to V. These functions are described here, but their implementation
+// is compiler specific.
+//
+// Each function takes a boolean test expression as its single argument.
+// These test expressions may use `it` as a pointer to a single element at a time.
+//
+// Example: array.filter(it < 5) // create an array of elements less than 5
+// Example: array.filter(it % 2 == 1) // create an array of only odd elements
+// Example: array.filter(it.name[0] == `A`) // create an array of elements whose `name` field starts with 'A'
 pub fn (a array) filter(predicate fn (voidptr) bool) array
 
 // any tests whether at least one element in the array passes the test.
@@ -664,9 +731,10 @@ pub fn (a array) filter(predicate fn (voidptr) bool) array
 // it returns `false`. It doesn't modify the array.
 //
 // Example: array.any(it % 2 == 1) // will return true if any element is odd
+// Example: array.any(it.name == 'Bob') // will yield `true` if any element has `.name == 'Bob'`
 pub fn (a array) any(predicate fn (voidptr) bool) bool
 
-// all tests whether all elements in the array pass the test
+// all tests whether all elements in the array pass the test.
 // Ignore the function signature. `all` does not take an actual callback. Rather, it
 // takes an `it` expression.
 // It returns `false` if any element fails the test. Otherwise,
@@ -676,34 +744,37 @@ pub fn (a array) any(predicate fn (voidptr) bool) bool
 pub fn (a array) all(predicate fn (voidptr) bool) bool
 
 // map creates a new array populated with the results of calling a provided function
-// on every element in the calling array
+// on every element in the calling array.
+// It also accepts an `it` expression.
+//
+// Example:
+// ```v
+// words := ['hello', 'world']
+// r1 := words.map(it.to_upper())
+// assert r1 == ['HELLO', 'WORLD']
+//
+// // map can also accept anonymous functions
+// r2 := words.map(fn (w string) string {
+// 	return w.to_upper()
+// })
+// assert r2 == ['HELLO', 'WORLD']
+// ```
 pub fn (a array) map(callback fn (voidptr) voidptr) array
 
-// sort sorts an array in place.
+// sort sorts the array in place.
 // Ignore the function signature. Passing a callback to `.sort` is not supported
 // for now. Consider using the `.sort_with_compare` method if you need it.
 //
-// Instead, a very simple syntax is available to you for custom sorting and more.
-//
-// Certain array functions (`filter` `any` `all` and `sort`) support a simplified
-// domain-specific-language by the backend compiler to make these operations
-// more idiomatic to V. These functions are described here, but their implementation
-// is compiler specific.
-//
-// Each function takes a boolean test expression as its single argument.
-// These test expressions may use certain 'magic' variables depending on their context:
-// - `sort` may use `a` and `b` as pointers to two elements
-//   giving you direct access to those objects
-// - `filter`, `any`, and `all` may use `it` as a pointer to a single element at a time.
+// sort can take a boolean test expression as its single argument.
+// The expression uses 2 'magic' variables `a` and `b` as pointers to the two elements
+// being compared.
 //
 // Example: array.sort() // will sort the array in ascending order
 // Example: array.sort(b < a) // will sort the array in decending order
 // Example: array.sort(b.name < a.name) // will sort descending by the .name field
-// Example: array.filter(it % 2 == 1) // will yield a new array of only odd elements
-// Example: array.any(it.name == 'Bob') // will yield `true` if any element has `.name == 'Bob'`
 pub fn (mut a array) sort(callback fn (voidptr, voidptr) int)
 
-// sort_with_compare sorts array in-place using the results of the
+// sort_with_compare sorts the array in-place using the results of the
 // given function to determine sort order.
 //
 // The function should return one of three values:
@@ -711,7 +782,7 @@ pub fn (mut a array) sort(callback fn (voidptr, voidptr) int)
 // - `1`  when `b` should come before `a` ( `b < a` )
 // - `0`  when the order cannot be determined ( `a == b` )
 //
-// ### Example:
+// Example:
 // ```v
 // fn main() {
 // 	mut a := ['hi', '1', '5', '3']
@@ -772,17 +843,17 @@ pub fn (a []string) str() string {
 	}
 	sb_len += 2 // 1x[ + 1x]
 	mut sb := strings.new_builder(sb_len)
-	sb.write_byte(`[`)
+	sb.write_u8(`[`)
 	for i in 0 .. a.len {
 		val := a[i]
-		sb.write_byte(`'`)
+		sb.write_u8(`'`)
 		sb.write_string(val)
-		sb.write_byte(`'`)
+		sb.write_u8(`'`)
 		if i < a.len - 1 {
 			sb.write_string(', ')
 		}
 	}
-	sb.write_byte(`]`)
+	sb.write_u8(`]`)
 	res := sb.str()
 	unsafe { sb.free() }
 	return res
@@ -790,18 +861,18 @@ pub fn (a []string) str() string {
 
 // hex returns a string with the hexadecimal representation
 // of the byte elements of the array.
-pub fn (b []byte) hex() string {
-	mut hex := unsafe { malloc(b.len * 2 + 1) }
+pub fn (b []u8) hex() string {
+	mut hex := unsafe { malloc_noscan(u64(b.len) * 2 + 1) }
 	mut dst_i := 0
 	for i in b {
 		n0 := i >> 4
 		unsafe {
-			hex[dst_i] = if n0 < 10 { n0 + `0` } else { n0 + byte(87) }
+			hex[dst_i] = if n0 < 10 { n0 + `0` } else { n0 + u8(87) }
 			dst_i++
 		}
 		n1 := i & 0xF
 		unsafe {
-			hex[dst_i] = if n1 < 10 { n1 + `0` } else { n1 + byte(87) }
+			hex[dst_i] = if n1 < 10 { n1 + `0` } else { n1 + u8(87) }
 			dst_i++
 		}
 	}
@@ -815,18 +886,19 @@ pub fn (b []byte) hex() string {
 // The number of the elements copied is the minimum of the length of both arrays.
 // Returns the number of elements copied.
 // NOTE: This is not an `array` method. It is a function that takes two arrays of bytes.
-// TODO: implement for all types
-pub fn copy(dst []byte, src []byte) int {
+// See also: `arrays.copy`.
+pub fn copy(mut dst []u8, src []u8) int {
 	min := if dst.len < src.len { dst.len } else { src.len }
 	if min > 0 {
-		unsafe { vmemcpy(&byte(dst.data), src.data, min) }
+		unsafe { vmemmove(&u8(dst.data), src.data, min) }
 	}
 	return min
 }
 
 // reduce executes a given reducer function on each element of the array,
 // resulting in a single output value.
-// NOTE: It exists as a method on `[]int` types only
+// NOTE: It exists as a method on `[]int` types only.
+// See also `arrays.fold`.
 pub fn (a []int) reduce(iter fn (int, int) int, accum_start int) int {
 	mut accum_ := accum_start
 	for i in a {
@@ -863,10 +935,10 @@ pub fn (a array) pointers() []voidptr {
 	return res
 }
 
-// vbytes on`voidptr` makes a V []byte structure from a C style memory buffer.
+// vbytes on`voidptr` makes a V []u8 structure from a C style memory buffer.
 // NOTE: the data is reused, NOT copied!
 [unsafe]
-pub fn (data voidptr) vbytes(len int) []byte {
+pub fn (data voidptr) vbytes(len int) []u8 {
 	res := array{
 		element_size: 1
 		data: data
@@ -876,9 +948,9 @@ pub fn (data voidptr) vbytes(len int) []byte {
 	return res
 }
 
-// vbytes on `&byte` makes a V []byte structure from a C style memory buffer.
+// vbytes on `&u8` makes a V []u8 structure from a C style memory buffer.
 // NOTE: the data is reused, NOT copied!
 [unsafe]
-pub fn (data &byte) vbytes(len int) []byte {
+pub fn (data &u8) vbytes(len int) []u8 {
 	return unsafe { voidptr(data).vbytes(len) }
 }

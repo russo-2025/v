@@ -3,6 +3,7 @@
 module checker
 
 import v.ast
+import v.token
 
 fn (mut c Checker) for_c_stmt(node ast.ForCStmt) {
 	c.in_for_count++
@@ -12,6 +13,16 @@ fn (mut c Checker) for_c_stmt(node ast.ForCStmt) {
 	}
 	c.expr(node.cond)
 	if node.has_inc {
+		if node.inc is ast.AssignStmt {
+			for right in node.inc.right {
+				if right is ast.CallExpr {
+					if right.or_block.stmts.len > 0 {
+						c.error('optionals are not allowed in `for statement increment` (yet)',
+							right.pos)
+					}
+				}
+			}
+		}
 		c.stmt(node.inc)
 	}
 	c.check_loop_label(node.label, node.pos)
@@ -27,14 +38,21 @@ fn (mut c Checker) for_in_stmt(mut node ast.ForInStmt) {
 	typ_idx := typ.idx()
 	if node.key_var.len > 0 && node.key_var != '_' {
 		c.check_valid_snake_case(node.key_var, 'variable name', node.pos)
+		if node.key_var in reserved_type_names {
+			c.error('invalid use of reserved type `$node.key_var` as key name', node.pos)
+		}
 	}
 	if node.val_var.len > 0 && node.val_var != '_' {
 		c.check_valid_snake_case(node.val_var, 'variable name', node.pos)
+		if node.val_var in reserved_type_names {
+			c.error('invalid use of reserved type `$node.val_var` as value name', node.pos)
+		}
 	}
 	if node.is_range {
 		high_type := c.expr(node.high)
 		high_type_idx := high_type.idx()
-		if typ_idx in ast.integer_type_idxs && high_type_idx !in ast.integer_type_idxs {
+		if typ_idx in ast.integer_type_idxs && high_type_idx !in ast.integer_type_idxs
+			&& high_type_idx != ast.void_type_idx {
 			c.error('range types do not match', node.cond.pos())
 		} else if typ_idx in ast.float_type_idxs || high_type_idx in ast.float_type_idxs {
 			c.error('range type can not be float', node.cond.pos())
@@ -94,6 +112,9 @@ fn (mut c Checker) for_in_stmt(mut node ast.ForInStmt) {
 				node.scope.update_var_type(node.key_var, key_type)
 			}
 			mut value_type := c.table.value_type(typ)
+			if sym.kind == .string {
+				value_type = ast.u8_type
+			}
 			if value_type == ast.void_type || typ.has_flag(.optional) {
 				if typ != ast.void_type {
 					c.error('for in: cannot index `${c.table.type_to_str(typ)}`', node.cond.pos())
@@ -101,12 +122,11 @@ fn (mut c Checker) for_in_stmt(mut node ast.ForInStmt) {
 			}
 			if node.val_is_mut {
 				value_type = value_type.ref()
-				match node.cond {
+				match mut node.cond {
 					ast.Ident {
-						if node.cond.obj is ast.Var {
-							obj := node.cond.obj as ast.Var
-							if !obj.is_mut {
-								c.error('`$obj.name` is immutable, it cannot be changed',
+						if mut node.cond.obj is ast.Var {
+							if !node.cond.obj.is_mut {
+								c.error('`$node.cond.obj.name` is immutable, it cannot be changed',
 									node.cond.pos)
 							}
 						}
@@ -145,26 +165,19 @@ fn (mut c Checker) for_stmt(mut node ast.ForStmt) {
 	c.in_for_count++
 	prev_loop_label := c.loop_label
 	c.expected_type = ast.bool_type
-	typ := c.expr(node.cond)
-	if !node.is_inf && typ.idx() != ast.bool_type_idx && !c.pref.translated && !c.file.is_translated {
-		c.error('non-bool used as for condition', node.pos)
+	if node.cond !is ast.EmptyExpr {
+		typ := c.expr(node.cond)
+		if !node.is_inf && typ.idx() != ast.bool_type_idx && !c.pref.translated
+			&& !c.file.is_translated {
+			c.error('non-bool used as for condition', node.pos)
+		}
 	}
 	if mut node.cond is ast.InfixExpr {
-		infix := node.cond
-		if infix.op == .key_is {
-			if infix.right is ast.TypeNode && infix.left in [ast.Ident, ast.SelectorExpr] {
-				is_variable := if mut infix.left is ast.Ident {
-					infix.left.kind == .variable
-				} else {
-					true
-				}
-				left_type := c.expr(infix.left)
-				left_sym := c.table.sym(left_type)
-				if is_variable {
-					if left_sym.kind in [.sum_type, .interface_] {
-						c.smartcast(infix.left, infix.left_type, infix.right.typ, mut
-							node.scope)
-					}
+		if node.cond.op == .key_is {
+			if node.cond.right is ast.TypeNode && node.cond.left in [ast.Ident, ast.SelectorExpr] {
+				if c.table.type_kind(node.cond.left_type) in [.sum_type, .interface_] {
+					c.smartcast(node.cond.left, node.cond.left_type, node.cond.right_type, mut
+						node.scope)
 				}
 			}
 		}
@@ -175,4 +188,7 @@ fn (mut c Checker) for_stmt(mut node ast.ForStmt) {
 	c.stmts(node.stmts)
 	c.loop_label = prev_loop_label
 	c.in_for_count--
+	if c.smartcast_mut_pos != token.Pos{} {
+		c.smartcast_mut_pos = token.Pos{}
+	}
 }

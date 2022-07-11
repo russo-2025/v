@@ -42,18 +42,22 @@ fn init_time_base() C.mach_timebase_info_data_t {
 fn sys_mono_now_darwin() u64 {
 	tm := C.mach_absolute_time()
 	if time.time_base.denom == 0 {
-		C.mach_timebase_info(&time.time_base)
+		unsafe {
+			C.mach_timebase_info(&time.time_base)
+		}
 	}
 	return (tm - time.start_time) * time.time_base.numer / time.time_base.denom
 }
 
-// NB: vpc_now_darwin is used by `v -profile` .
+// Note: vpc_now_darwin is used by `v -profile` .
 // It should NOT call *any other v function*, just C functions and casts.
 [inline]
 fn vpc_now_darwin() u64 {
 	tm := C.mach_absolute_time()
 	if time.time_base.denom == 0 {
-		C.mach_timebase_info(&time.time_base)
+		unsafe {
+			C.mach_timebase_info(&time.time_base)
+		}
 	}
 	return (tm - time.start_time) * time.time_base.numer / time.time_base.denom
 }

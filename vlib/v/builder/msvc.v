@@ -119,7 +119,7 @@ fn find_windows_kit_root_by_reg(target_arch string) ?WindowsKit {
 
 fn new_windows_kit(kit_root string, target_arch string) ?WindowsKit {
 	kit_lib := kit_root + 'Lib'
-	files := os.ls(kit_lib) ?
+	files := os.ls(kit_lib)?
 	mut highest_path := ''
 	mut highest_int := 0
 	for f in files {
@@ -176,18 +176,17 @@ fn find_vs_by_reg(vswhere_dir string, host_arch string, target_arch string) ?VsI
 		// If its not there then end user needs to update their visual studio
 		// installation!
 		res := os.execute('"$vswhere_dir\\Microsoft Visual Studio\\Installer\\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath')
+		// println('res: "$res"')
 		if res.exit_code != 0 {
 			return error_with_code(res.output, res.exit_code)
 		}
-		res_output := res.output.trim_right('\r\n')
-		// println('res: "$res"')
+		res_output := res.output.trim_space()
 		version := os.read_file('$res_output\\VC\\Auxiliary\\Build\\Microsoft.VCToolsVersion.default.txt') or {
 			// println('Unable to find msvc version')
 			return error('Unable to find vs installation')
 		}
-		version2 := version // TODO remove. cgen option bug if expr
 		// println('version: $version')
-		v := if version.ends_with('\n') { version2[..version.len - 2] } else { version2 }
+		v := version.trim_space()
 		lib_path := '$res_output\\VC\\Tools\\MSVC\\$v\\lib\\$target_arch'
 		include_path := '$res_output\\VC\\Tools\\MSVC\\$v\\include'
 		if os.exists('$lib_path\\vcruntime.lib') {
@@ -272,13 +271,14 @@ pub fn (mut v Builder) cc_msvc() {
 	out_name_obj := os.real_path(v.out_name_c + '.obj')
 	out_name_pdb := os.real_path(v.out_name_c + '.pdb')
 	out_name_cmd_line := os.real_path(v.out_name_c + '.rsp')
+	mut a := []string{}
 	//
 	env_cflags := os.getenv('CFLAGS')
-	env_ldflags := os.getenv('LDFLAGS')
-	mut a := [v.pref.cflags]
-	if env_cflags != '' {
-		a << env_cflags
+	mut all_cflags := '$env_cflags $v.pref.cflags'
+	if all_cflags != ' ' {
+		a << all_cflags
 	}
+	//
 	// Default arguments
 	// `-w` no warnings
 	// `/we4013` 2 unicode defines, see https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-3-c4013?redirectedfrom=MSDN&view=msvc-170
@@ -346,10 +346,7 @@ pub fn (mut v Builder) cc_msvc() {
 	defines := sflags.defines
 	other_flags := sflags.other_flags
 	// Include the base paths
-	a << '-I "$r.ucrt_include_path"'
-	a << '-I "$r.vs_include_path"'
-	a << '-I "$r.um_include_path"'
-	a << '-I "$r.shared_include_path"'
+	a << r.include_paths()
 	a << defines
 	a << inc_paths
 	a << other_flags
@@ -358,19 +355,22 @@ pub fn (mut v Builder) cc_msvc() {
 	a << '/link'
 	a << '/NOLOGO'
 	a << '/OUT:"$v.pref.out_name"'
-	a << '/LIBPATH:"$r.ucrt_lib_path"'
-	a << '/LIBPATH:"$r.um_lib_path"'
-	a << '/LIBPATH:"$r.vs_lib_path"'
-	a << '/DEBUG:FULL' // required for prod builds to generate PDB
+	a << r.library_paths()
+	if !all_cflags.contains('/DEBUG') {
+		// only use /DEBUG, if the user *did not* provide its own:
+		a << '/DEBUG:FULL' // required for prod builds to generate a PDB file
+	}
 	if v.pref.is_prod {
 		a << '/INCREMENTAL:NO' // Disable incremental linking
 		a << '/OPT:REF'
 		a << '/OPT:ICF'
 	}
 	a << lib_paths
+	env_ldflags := os.getenv('LDFLAGS')
 	if env_ldflags != '' {
 		a << env_ldflags
 	}
+	v.dump_c_options(a)
 	args := a.join(' ')
 	// write args to a file so that we dont smash createprocess
 	os.write_file(out_name_cmd_line, args) or {
@@ -407,25 +407,28 @@ fn (mut v Builder) build_thirdparty_obj_file_with_msvc(path string, moduleflags 
 		verror('Cannot find MSVC on this OS')
 	}
 	// msvc expects .obj not .o
-	mut obj_path := '${path}bj'
+	path_without_o_postfix := path[..path.len - 2] // remove .o
+	mut obj_path := '${path_without_o_postfix}.obj'
 	obj_path = os.real_path(obj_path)
 	if os.exists(obj_path) {
 		// println('$obj_path already built.')
 		return
 	}
 	println('$obj_path not found, building it (with msvc)...')
-	cfiles := '${path[..path.len - 2]}.c'
+	cfile := '${path_without_o_postfix}.c'
 	flags := msvc_string_flags(moduleflags)
 	inc_dirs := flags.inc_paths.join(' ')
 	defines := flags.defines.join(' ')
-	include_string := '-I "$msvc.ucrt_include_path" -I "$msvc.vs_include_path" -I "$msvc.um_include_path" -I "$msvc.shared_include_path" $inc_dirs'
-	// println('cfiles: $cfiles')
+	//
+	mut oargs := []string{}
 	env_cflags := os.getenv('CFLAGS')
-	env_ldflags := os.getenv('LDFLAGS')
-	mut oargs := [v.pref.cflags]
-	if env_cflags != '' {
-		oargs << env_cflags
+	mut all_cflags := '$env_cflags $v.pref.cflags'
+	if all_cflags != ' ' {
+		oargs << all_cflags
 	}
+	oargs << '/NOLOGO'
+	oargs << '/volatile:ms'
+	//
 	if v.pref.is_prod {
 		oargs << '/O2'
 		oargs << '/MD'
@@ -434,12 +437,19 @@ fn (mut v Builder) build_thirdparty_obj_file_with_msvc(path string, moduleflags 
 		oargs << '/MDd'
 		oargs << '/D_DEBUG'
 	}
+	oargs << defines
+	oargs << msvc.include_paths()
+	oargs << inc_dirs
+	oargs << '/c "$cfile"'
+	oargs << '/Fo"$obj_path"'
+	env_ldflags := os.getenv('LDFLAGS')
 	if env_ldflags != '' {
 		oargs << env_ldflags
 	}
+	v.dump_c_options(oargs)
 	str_oargs := oargs.join(' ')
-	cmd := '"$msvc.full_cl_exe_path" /volatile:ms $str_oargs $defines $include_string /c $cfiles /Fo"$obj_path"'
-	// NB: the quotes above ARE balanced.
+	cmd := '"$msvc.full_cl_exe_path" $str_oargs'
+	// Note: the quotes above ARE balanced.
 	$if trace_thirdparty_obj_files ? {
 		println('>>> build_thirdparty_obj_file_with_msvc cmd: $cmd')
 	}
@@ -489,7 +499,7 @@ pub fn msvc_string_flags(cflags []cflag.CFlag) MsvcStringFlags {
 			lib_paths << flag.value + os.path_separator + 'msvc'
 			// The above allows putting msvc specific .lib files in a subfolder msvc/ ,
 			// where gcc will NOT find them, but cl will do...
-			// NB: gcc is smart enough to not need .lib files at all in most cases, the .dll is enough.
+			// Note: gcc is smart enough to not need .lib files at all in most cases, the .dll is enough.
 			// When both a msvc .lib file and .dll file are present in the same folder,
 			// as for example for glfw3, compilation with gcc would fail.
 		} else if flag.value.ends_with('.o') {
@@ -503,7 +513,7 @@ pub fn msvc_string_flags(cflags []cflag.CFlag) MsvcStringFlags {
 	}
 	mut lpaths := []string{}
 	for l in lib_paths {
-		lpaths << '/LIBPATH:"' + os.real_path(l) + '"'
+		lpaths << '/LIBPATH:"${os.real_path(l)}"'
 	}
 	return MsvcStringFlags{
 		real_libs: real_libs
@@ -512,4 +522,35 @@ pub fn msvc_string_flags(cflags []cflag.CFlag) MsvcStringFlags {
 		defines: defines
 		other_flags: other_flags
 	}
+}
+
+fn (r MsvcResult) include_paths() []string {
+	mut res := []string{cap: 4}
+	if r.ucrt_include_path != '' {
+		res << '-I "$r.ucrt_include_path"'
+	}
+	if r.vs_include_path != '' {
+		res << '-I "$r.vs_include_path"'
+	}
+	if r.um_include_path != '' {
+		res << '-I "$r.um_include_path"'
+	}
+	if r.shared_include_path != '' {
+		res << '-I "$r.shared_include_path"'
+	}
+	return res
+}
+
+fn (r MsvcResult) library_paths() []string {
+	mut res := []string{cap: 3}
+	if r.ucrt_lib_path != '' {
+		res << '/LIBPATH:"$r.ucrt_lib_path"'
+	}
+	if r.um_lib_path != '' {
+		res << '/LIBPATH:"$r.um_lib_path"'
+	}
+	if r.vs_lib_path != '' {
+		res << '/LIBPATH:"$r.vs_lib_path"'
+	}
+	return res
 }

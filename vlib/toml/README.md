@@ -8,7 +8,8 @@ Parsing files or `string`s containing TOML is easy.
 
 Simply import the `toml` module and do:
 ```v ignore
-doc := toml.parse(<file path or string>) or { panic(err) }
+doc1 := toml.parse_text(<string content>) or { panic(err) }
+doc2 := toml.parse_file(<file path>) or { panic(err) }
 ```
 
 ## Example
@@ -54,7 +55,7 @@ hosts = [
 ]'
 
 fn main() {
-	doc := toml.parse(toml_text) or { panic(err) }
+	doc := toml.parse_text(toml_text) or { panic(err) }
 	title := doc.value('title').string()
 	println('title: "$title"')
 	ip := doc.value('servers.alpha.ip').string()
@@ -78,6 +79,10 @@ To query for a value that might not be in the document you
 can use the `.default_to(...)` function to provide a
 default value.
 
+For cases where a default value might not be appropiate or
+to check if a value exists you can use `doc.value_opt('query')?`
+instead.
+
 ```v
 import toml
 
@@ -91,7 +96,7 @@ array = [
 ]
 '
 
-doc := toml.parse(toml_text) or { panic(err) }
+doc := toml.parse_text(toml_text) or { panic(err) }
 
 assert doc.value('val').bool() == true
 assert doc.value('table.array[0].a').string() == 'A'
@@ -99,8 +104,15 @@ assert doc.value('table.array[0].a').string() == 'A'
 // Provides a default value
 assert doc.value('non.existing').default_to(false).bool() == false
 
+// Check if value exist
+// doc.value_opt('should.exist') or { ... }
+// or
+if value := doc.value_opt('table.array[1].b') {
+	assert value.string() == 'B'
+}
+
 // You can pass parts of the TOML document around
-// and still use .value() to get the values
+// and still use .value()/.value_opt() to get the values
 arr := doc.value('table.array')
 assert arr.value('[1].b').string() == 'B'
 ```
@@ -142,6 +154,6 @@ array = [
 ]
 '
 
-doc := toml.parse(toml_text) or { panic(err) }
+doc := toml.parse_text(toml_text) or { panic(err) }
 assert to.json(doc) == '{ "val": true, "table": { "array": [ { "a": "A" }, { "b": "B" } ] } }'
 ```

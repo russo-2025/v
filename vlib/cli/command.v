@@ -1,5 +1,7 @@
 module cli
 
+import term
+
 type FnCommandCallback = fn (cmd Command) ?
 
 // str returns the `string` representation of the callback.
@@ -14,16 +16,18 @@ pub mut:
 	name            string
 	usage           string
 	description     string
+	man_description string
 	version         string
 	pre_execute     FnCommandCallback
 	execute         FnCommandCallback
 	post_execute    FnCommandCallback
 	disable_help    bool
+	disable_man     bool
 	disable_version bool
 	disable_flags   bool
 	sort_flags      bool
 	sort_commands   bool
-	parent          &Command = 0
+	parent          &Command = unsafe { 0 }
 	commands        []Command
 	flags           []Flag
 	required_args   int
@@ -39,7 +43,9 @@ pub fn (cmd Command) str() string {
 	res << '	usage: "$cmd.usage"'
 	res << '	version: "$cmd.version"'
 	res << '	description: "$cmd.description"'
+	res << '	man_description: "$cmd.man_description"'
 	res << '	disable_help: $cmd.disable_help'
+	res << '	disable_man: $cmd.disable_man'
 	res << '	disable_flags: $cmd.disable_flags'
 	res << '	disable_version: $cmd.disable_version'
 	res << '	sort_flags: $cmd.sort_flags'
@@ -47,7 +53,7 @@ pub fn (cmd Command) str() string {
 	res << '	cb execute: $cmd.execute'
 	res << '	cb pre_execute: $cmd.pre_execute'
 	res << '	cb post_execute: $cmd.post_execute'
-	if cmd.parent == 0 {
+	if unsafe { cmd.parent == 0 } {
 		res << '	parent: &Command(0)'
 	} else {
 		res << '	parent: &Command{$cmd.parent.name ...}'
@@ -92,8 +98,7 @@ pub fn (mut cmd Command) add_commands(commands []Command) {
 pub fn (mut cmd Command) add_command(command Command) {
 	mut subcmd := command
 	if cmd.commands.contains(subcmd.name) {
-		println('Command with the name `$subcmd.name` already exists')
-		exit(1)
+		eprintln_exit('Command with the name `$subcmd.name` already exists')
 	}
 	subcmd.parent = unsafe { cmd }
 	cmd.commands << subcmd
@@ -119,8 +124,7 @@ pub fn (mut cmd Command) add_flags(flags []Flag) {
 // add_flag adds `flag` to this `Command`.
 pub fn (mut cmd Command) add_flag(flag Flag) {
 	if cmd.flags.contains(flag.name) {
-		println('Flag with the name `$flag.name` already exists')
-		exit(1)
+		eprintln_exit('Flag with the name `$flag.name` already exists')
 	}
 	cmd.flags << flag
 }
@@ -155,6 +159,9 @@ fn (mut cmd Command) add_default_flags() {
 		use_version_abbrev := !cmd.flags.contains('v') && cmd.posix_mode
 		cmd.add_flag(version_flag(use_version_abbrev))
 	}
+	if !cmd.disable_man && !cmd.flags.contains('man') {
+		cmd.add_flag(man_flag())
+	}
 }
 
 // add_default_commands adds the command functions of the
@@ -165,6 +172,9 @@ fn (mut cmd Command) add_default_commands() {
 	}
 	if !cmd.disable_version && cmd.version != '' && !cmd.commands.contains('version') {
 		cmd.add_command(version_cmd())
+	}
+	if !cmd.disable_man && !cmd.commands.contains('man') && cmd.is_root() {
+		cmd.add_command(man_cmd())
 	}
 }
 
@@ -181,16 +191,14 @@ fn (mut cmd Command) parse_flags() {
 					found = true
 					flag.found = true
 					cmd.args = flag.parse(cmd.args, cmd.posix_mode) or {
-						println('Failed to parse flag `${cmd.args[0]}`: $err')
-						exit(1)
+						eprintln_exit('Failed to parse flag `${cmd.args[0]}`: $err')
 					}
 					break
 				}
 			}
 		}
 		if !found {
-			println('Command `$cmd.name` has no flag `${cmd.args[0]}`')
-			exit(1)
+			eprintln_exit('Command `$cmd.name` has no flag `${cmd.args[0]}`')
 		}
 	}
 }
@@ -199,6 +207,7 @@ fn (mut cmd Command) parse_commands() {
 	global_flags := cmd.flags.filter(it.global)
 	cmd.check_help_flag()
 	cmd.check_version_flag()
+	cmd.check_man_flag()
 	for i in 0 .. cmd.args.len {
 		arg := cmd.args[i]
 		for j in 0 .. cmd.commands.len {
@@ -221,27 +230,21 @@ fn (mut cmd Command) parse_commands() {
 	// if no further command was found, execute current command
 	if cmd.required_args > 0 {
 		if cmd.required_args > cmd.args.len {
-			eprintln('Command `$cmd.name` needs at least $cmd.required_args arguments')
-			exit(1)
+			eprintln_exit('Command `$cmd.name` needs at least $cmd.required_args arguments')
 		}
 	}
 	cmd.check_required_flags()
-	if !isnil(cmd.pre_execute) {
-		cmd.pre_execute(*cmd) or {
-			eprintln('cli preexecution error: $err')
-			exit(1)
-		}
-	}
-	if !isnil(cmd.execute) {
-		cmd.execute(*cmd) or {
-			eprintln('cli execution error: $err')
-			exit(1)
-		}
-	}
-	if !isnil(cmd.post_execute) {
-		cmd.post_execute(*cmd) or {
-			eprintln('cli postexecution error: $err')
-			exit(1)
+
+	cmd.handle_cb(cmd.pre_execute, 'preexecution')
+	cmd.handle_cb(cmd.execute, 'execution')
+	cmd.handle_cb(cmd.post_execute, 'postexecution')
+}
+
+fn (mut cmd Command) handle_cb(cb FnCommandCallback, label string) {
+	if !isnil(cb) {
+		cb(*cmd) or {
+			label_message := term.ecolorize(term.bright_red, 'cli $label error:')
+			eprintln_exit('$label_message $err')
 		}
 	}
 }
@@ -251,6 +254,16 @@ fn (cmd Command) check_help_flag() {
 		help_flag := cmd.flags.get_bool('help') or { return } // ignore error and handle command normally
 		if help_flag {
 			cmd.execute_help()
+			exit(0)
+		}
+	}
+}
+
+fn (cmd Command) check_man_flag() {
+	if !cmd.disable_man && cmd.flags.contains('man') {
+		man_flag := cmd.flags.get_bool('man') or { return } // ignore error and handle command normally
+		if man_flag {
+			cmd.execute_man()
 			exit(0)
 		}
 	}
@@ -271,8 +284,7 @@ fn (cmd Command) check_required_flags() {
 	for flag in cmd.flags {
 		if flag.required && flag.value.len == 0 {
 			full_name := cmd.full_name()
-			println('Flag `$flag.name` is required by `$full_name`')
-			exit(1)
+			eprintln_exit('Flag `$flag.name` is required by `$full_name`')
 		}
 	}
 }
@@ -285,6 +297,17 @@ pub fn (cmd Command) execute_help() {
 		help_cmd.execute(help_cmd) or { panic(err) }
 	} else {
 		print(cmd.help_message())
+	}
+}
+
+// execute_help executes the callback registered
+// for the `-man` flag option.
+pub fn (cmd Command) execute_man() {
+	if cmd.commands.contains('man') {
+		man_cmd := cmd.commands.get('man') or { return }
+		man_cmd.execute(man_cmd) or { panic(err) }
+	} else {
+		print(cmd.manpage())
 	}
 }
 
@@ -304,4 +327,10 @@ fn (cmds []Command) contains(name string) bool {
 		}
 	}
 	return false
+}
+
+[noreturn]
+fn eprintln_exit(message string) {
+	eprintln(message)
+	exit(1)
 }

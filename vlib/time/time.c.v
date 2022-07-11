@@ -12,8 +12,13 @@ pub struct C.timeval {
 }
 
 fn C.localtime(t &C.time_t) &C.tm
+fn C.localtime_r(t &C.time_t, tm &C.tm)
 
 fn C.time(t &C.time_t) C.time_t
+
+fn C.gmtime(t &C.time_t) &C.tm
+fn C.gmtime_r(t &C.time_t, res &C.tm) &C.tm
+fn C.strftime(buf &C.char, maxsize C.size_t, fmt &C.char, tm &C.tm) C.size_t
 
 // now returns current local time.
 pub fn now() Time {
@@ -91,15 +96,7 @@ pub fn ticks() i64 {
 	// # return (double)(* (uint64_t *) &elapsedNano) / 1000000;
 }
 
-/*
-// sleep makes the calling thread sleep for a given number of seconds.
-[deprecated: 'call time.sleep(n * time.second)']
-pub fn sleep(seconds int) {
-	wait(seconds * time.second)
-}
-*/
-
-// str returns time in the same format as `parse` expects ("YYYY-MM-DD HH:MM:SS").
+// str returns time in the same format as `parse` expects ("YYYY-MM-DD HH:mm:ss").
 pub fn (t Time) str() string {
 	// TODO Define common default format for
 	// `str` and `parse` and use it in both ways
@@ -117,5 +114,23 @@ fn convert_ctime(t C.tm, microsecond int) Time {
 		second: t.tm_sec
 		microsecond: microsecond
 		unix: make_unix_time(t)
+		// for the actual code base when we
+		// call convert_ctime, it is always
+		// when we manage the local time.
+		is_local: true
 	}
+}
+
+// strftime returns the formatted time using `strftime(3)`
+pub fn (t Time) strftime(fmt string) string {
+	mut tm := &C.tm{}
+	$if windows {
+		tm = C.gmtime(voidptr(&t.unix))
+	} $else {
+		C.gmtime_r(voidptr(&t.unix), tm)
+	}
+	mut buf := [1024]C.char{}
+	fmt_c := unsafe { &C.char(fmt.str) }
+	C.strftime(&buf[0], C.size_t(sizeof(buf)), fmt_c, tm)
+	return unsafe { cstring_to_vstring(&char(&buf[0])) }
 }

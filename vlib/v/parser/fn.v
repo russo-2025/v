@@ -24,7 +24,6 @@ pub fn (mut p Parser) call_expr(language ast.Language, mod string) ast.CallExpr 
 	mut or_kind := ast.OrKind.absent
 	if fn_name == 'json.decode' {
 		p.expecting_type = true // Makes name_expr() parse the type `User` in `json.decode(User, txt)`
-		or_kind = .block
 	}
 
 	old_expr_mod := p.expr_mod
@@ -45,10 +44,6 @@ pub fn (mut p Parser) call_expr(language ast.Language, mod string) ast.CallExpr 
 	args := p.call_args()
 	last_pos := p.tok.pos()
 	p.check(.rpar)
-	// ! in mutable methods
-	if p.tok.kind == .not {
-		p.next()
-	}
 	mut pos := first_pos.extend(last_pos)
 	mut or_stmts := []ast.Stmt{} // TODO remove unnecessary allocations by just using .absent
 	mut or_pos := p.tok.pos()
@@ -70,13 +65,14 @@ pub fn (mut p Parser) call_expr(language ast.Language, mod string) ast.CallExpr 
 		p.close_scope()
 		p.inside_or_expr = was_inside_or_expr
 	}
-	if p.tok.kind == .question {
+	if p.tok.kind in [.question, .not] {
+		is_not := p.tok.kind == .not
 		// `foo()?`
 		p.next()
 		if p.inside_defer {
 			p.error_with_pos('error propagation not allowed inside `defer` blocks', p.prev_tok.pos())
 		}
-		or_kind = .propagate
+		or_kind = if is_not { .propagate_result } else { .propagate_option }
 	}
 	if fn_name in p.imported_symbols {
 		fn_name = p.imported_symbols[fn_name]
@@ -127,7 +123,7 @@ pub fn (mut p Parser) call_args() []ast.CallArg {
 		mut expr := ast.empty_expr()
 		if p.tok.kind == .name && p.peek_tok.kind == .colon {
 			// `foo(key:val, key2:val2)`
-			expr = p.struct_init('void_type', true) // short_syntax:true
+			expr = p.struct_init('void_type', .short_syntax)
 		} else {
 			expr = p.expr(0)
 		}
@@ -182,20 +178,63 @@ fn (mut p Parser) fn_decl() ast.FnDecl {
 	mut is_ctor_new := false
 	mut is_c2v_variadic := false
 	mut is_markused := false
+	mut comments := []ast.Comment{}
 	for fna in p.attrs {
 		match fna.name {
-			'noreturn' { is_noreturn = true }
-			'manualfree' { is_manualfree = true }
-			'deprecated' { is_deprecated = true }
-			'direct_array_access' { is_direct_arr = true }
-			'keep_args_alive' { is_keep_alive = true }
-			'export' { is_exported = true }
-			'wasm_export' { is_exported = true }
-			'unsafe' { is_unsafe = true }
-			'trusted' { is_trusted = true }
-			'c2v_variadic' { is_c2v_variadic = true }
-			'use_new' { is_ctor_new = true }
-			'markused' { is_markused = true }
+			'noreturn' {
+				is_noreturn = true
+			}
+			'manualfree' {
+				is_manualfree = true
+			}
+			'deprecated' {
+				is_deprecated = true
+			}
+			'direct_array_access' {
+				is_direct_arr = true
+			}
+			'keep_args_alive' {
+				is_keep_alive = true
+			}
+			'export' {
+				is_exported = true
+			}
+			'wasm_export' {
+				is_exported = true
+			}
+			'unsafe' {
+				is_unsafe = true
+			}
+			'trusted' {
+				is_trusted = true
+			}
+			'c2v_variadic' {
+				is_c2v_variadic = true
+			}
+			'use_new' {
+				is_ctor_new = true
+			}
+			'markused' {
+				is_markused = true
+			}
+			'windows_stdcall' {
+				p.note_with_pos('the tag [windows_stdcall] has been deprecated, it will be an error after 2022-06-01, use `[callconv: stdcall]` instead',
+					p.tok.pos())
+			}
+			'_fastcall' {
+				p.note_with_pos('the tag [_fastcall] has been deprecated, it will be an error after 2022-06-01, use `[callconv: fastcall]` instead',
+					p.tok.pos())
+			}
+			'callconv' {
+				if !fna.has_arg {
+					p.error_with_pos('callconv attribute is present but its value is missing',
+						p.prev_tok.pos())
+				}
+				if fna.arg !in ['stdcall', 'fastcall', 'cdecl'] {
+					p.error_with_pos('unsupported calling convention, supported are stdcall, fastcall and cdecl',
+						p.prev_tok.pos())
+				}
+			}
 			else {}
 		}
 	}
@@ -205,6 +244,7 @@ fn (mut p Parser) fn_decl() ast.FnDecl {
 		p.next()
 	}
 	p.check(.key_fn)
+	comments << p.eat_comments()
 	p.open_scope()
 	// C. || JS.
 	mut language := ast.Language.v
@@ -311,8 +351,9 @@ fn (mut p Parser) fn_decl() ast.FnDecl {
 	if is_method && rec.typ.has_flag(.generic) {
 		sym := p.table.sym(rec.typ)
 		if sym.info is ast.Struct {
-			rec_generic_names := sym.info.generic_types.map(p.table.sym(it).name)
-			for gname in rec_generic_names {
+			fn_generic_names := generic_names.clone()
+			generic_names = sym.info.generic_types.map(p.table.sym(it).name)
+			for gname in fn_generic_names {
 				if gname !in generic_names {
 					generic_names << gname
 				}
@@ -353,8 +394,15 @@ fn (mut p Parser) fn_decl() ast.FnDecl {
 	same_line := p.tok.line_nr == p.prev_tok.line_nr
 	if (p.tok.kind.is_start_of_type() && (same_line || p.tok.kind != .lsbr))
 		|| (same_line && p.tok.kind == .key_fn) {
+		p.inside_fn_return = true
 		return_type = p.parse_type()
+		p.inside_fn_return = false
 		return_type_pos = return_type_pos.extend(p.prev_tok.pos())
+	}
+	if p.tok.kind == .comma {
+		mr_pos := return_type_pos.extend(p.peek_tok.pos())
+		p.error_with_pos('multiple return types in function declaration must use parentheses, e.g. (int, string)',
+			mr_pos)
 	}
 	mut type_sym_method_idx := 0
 	no_body := p.tok.kind != .lcbr
@@ -464,10 +512,10 @@ fn (mut p Parser) fn_decl() ast.FnDecl {
 	// Body
 	p.cur_fn_name = name
 	mut stmts := []ast.Stmt{}
-	body_start_pos := p.peek_tok.pos()
+	body_start_pos := p.tok.pos()
 	if p.tok.kind == .lcbr {
 		if language != .v && language != .js {
-			p.error_with_pos('interop functions cannot have a body', p.tok.pos())
+			p.error_with_pos('interop functions cannot have a body', body_start_pos)
 		}
 		p.inside_fn = true
 		p.inside_unsafe_fn = is_unsafe
@@ -528,6 +576,7 @@ fn (mut p Parser) fn_decl() ast.FnDecl {
 		scope: p.scope
 		label_names: p.label_names
 		end_comments: p.eat_comments(same_line: true)
+		comments: comments
 	}
 	if generic_names.len > 0 {
 		p.table.register_fn_generic_types(fn_decl.fkey())
@@ -606,6 +655,15 @@ fn (mut p Parser) fn_receiver(mut params []ast.Param, mut rec ReceiverParsingInf
 		p.check_for_impure_v(rec.language, rec.type_pos)
 	}
 
+	p.check(.rpar)
+
+	if is_auto_rec && p.tok.kind != .name {
+		// Disable the auto-reference conversion for methodlike operators like ==, <=, > etc,
+		// since their parameters and receivers, *must* always be of the same type.
+		is_auto_rec = false
+		rec.typ = rec.typ.deref()
+	}
+
 	params << ast.Param{
 		pos: rec_start_pos
 		name: rec.name
@@ -614,18 +672,15 @@ fn (mut p Parser) fn_receiver(mut params []ast.Param, mut rec ReceiverParsingInf
 		typ: rec.typ
 		type_pos: rec.type_pos
 	}
-	p.check(.rpar)
-
-	return
 }
 
 fn (mut p Parser) anon_fn() ast.AnonFn {
 	pos := p.tok.pos()
 	p.check(.key_fn)
-	if p.pref.is_script && p.tok.kind == .name {
-		p.error_with_pos('function declarations in script mode should be before all script statements',
-			p.tok.pos())
-		return ast.AnonFn{}
+	if p.tok.kind == .name {
+		if p.disallow_declarations_in_script_mode() {
+			return ast.AnonFn{}
+		}
 	}
 	old_inside_defer := p.inside_defer
 	p.inside_defer = false
@@ -696,6 +751,17 @@ fn (mut p Parser) anon_fn() ast.AnonFn {
 	typ := ast.new_type(idx)
 	p.inside_defer = old_inside_defer
 	// name := p.table.get_type_name(typ)
+	if inherited_vars.len > 0 && args.len > 0 {
+		for arg in args {
+			for var in inherited_vars {
+				if arg.name == var.name {
+					p.error_with_pos('the parameter name `$arg.name` conflicts with the captured value name',
+						arg.pos)
+					break
+				}
+			}
+		}
+	}
 	return ast.AnonFn{
 		decl: ast.FnDecl{
 			name: name
@@ -730,12 +796,15 @@ fn (mut p Parser) fn_args() ([]ast.Param, bool, bool) {
 	} else {
 		p.tok.lit
 	}
+	is_generic_type := p.tok.kind == .name && p.tok.lit.len == 1 && p.tok.lit[0].is_capital()
+
 	types_only := p.tok.kind in [.amp, .ellipsis, .key_fn, .lsbr]
-		|| (p.peek_tok.kind == .comma && p.table.known_type(argname))
+		|| (p.peek_tok.kind == .comma && (p.table.known_type(argname) || is_generic_type))
 		|| p.peek_tok.kind == .dot || p.peek_tok.kind == .rpar
 		|| (p.tok.kind == .key_mut && (p.peek_token(2).kind == .comma
-		|| p.peek_token(2).kind == .rpar))
-	// TODO copy pasta, merge 2 branches
+		|| p.peek_token(2).kind == .rpar || (p.peek_tok.kind == .name
+		&& p.peek_token(2).kind == .dot)))
+	// TODO copy paste, merge 2 branches
 	if types_only {
 		mut arg_no := 1
 		for p.tok.kind != .rpar {
@@ -791,6 +860,7 @@ fn (mut p Parser) fn_args() ([]ast.Param, bool, bool) {
 				p.error_with_pos('expecting `)`', p.prev_tok.pos())
 				return []ast.Param{}, false, false
 			}
+
 			if p.tok.kind == .comma {
 				if is_variadic {
 					p.error_with_pos('cannot use ...(variadic) with non-final parameter no $arg_no',
@@ -829,7 +899,12 @@ fn (mut p Parser) fn_args() ([]ast.Param, bool, bool) {
 				p.next()
 			}
 			mut arg_pos := [p.tok.pos()]
-			mut arg_names := [p.check_name()]
+			name := p.check_name()
+			mut arg_names := [name]
+			if name.len > 0 && p.fn_language == .v && name[0].is_capital() {
+				p.error_with_pos('parameter name must not begin with upper case letter (`${arg_names[0]}`)',
+					p.prev_tok.pos())
+			}
 			mut type_pos := [p.tok.pos()]
 			// `a, b, c int`
 			for p.tok.kind == .comma {
@@ -920,6 +995,27 @@ fn (mut p Parser) fn_args() ([]ast.Param, bool, bool) {
 	return args, types_only, is_variadic
 }
 
+fn (mut p Parser) go_expr() ast.GoExpr {
+	p.next()
+	spos := p.tok.pos()
+	expr := p.expr(0)
+	call_expr := if expr is ast.CallExpr {
+		expr
+	} else {
+		p.error_with_pos('expression in `go` must be a function call', expr.pos())
+		ast.CallExpr{
+			scope: p.scope
+		}
+	}
+	pos := spos.extend(p.prev_tok.pos())
+	p.register_auto_import('sync.threads')
+	p.table.gostmts++
+	return ast.GoExpr{
+		call_expr: call_expr
+		pos: pos
+	}
+}
+
 fn (mut p Parser) closure_vars() []ast.Param {
 	p.check(.lsbr)
 	mut vars := []ast.Param{cap: 5}
@@ -935,6 +1031,11 @@ fn (mut p Parser) closure_vars() []ast.Param {
 		p.check(.name)
 		var_name := p.prev_tok.lit
 		mut var := p.scope.parent.find_var(var_name) or {
+			if p.table.global_scope.known_global(var_name) {
+				p.error_with_pos('no need to capture global variable `$var_name` in closure',
+					p.prev_tok.pos())
+				continue
+			}
 			p.error_with_pos('undefined ident: `$var_name`', p.prev_tok.pos())
 			continue
 		}

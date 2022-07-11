@@ -17,7 +17,7 @@ import vhelp
 
 struct FormatOptions {
 	is_l       bool
-	is_c       bool // NB: This refers to the '-c' fmt flag, NOT the C backend
+	is_c       bool // Note: This refers to the '-c' fmt flag, NOT the C backend
 	is_w       bool
 	is_diff    bool
 	is_verbose bool
@@ -25,8 +25,10 @@ struct FormatOptions {
 	is_debug   bool
 	is_noerror bool
 	is_verify  bool // exit(1) if the file is not vfmt'ed
-	is_worker  bool // true *only* in the worker processes. NB: workers can crash.
+	is_worker  bool // true *only* in the worker processes. Note: workers can crash.
 	is_backup  bool // make a `file.v.bak` copy *before* overwriting a `file.v` in place with `-w`
+mut:
+	diff_cmd string // filled in when -diff or -verify is passed
 }
 
 const (
@@ -59,9 +61,7 @@ fn main() {
 	if term_colors {
 		os.setenv('VCOLORS', 'always', true)
 	}
-	if foptions.is_verbose {
-		eprintln('vfmt foptions: $foptions')
-	}
+	foptions.vlog('vfmt foptions: $foptions')
 	if foptions.is_worker {
 		// -worker should be added by a parent vfmt process.
 		// We launch a sub process for each file because
@@ -80,7 +80,7 @@ fn main() {
 		eprintln('vfmt possible_files: ' + possible_files.str())
 	}
 	files := util.find_all_v_files(possible_files) or {
-		verror(err.msg)
+		verror(err.msg())
 		return
 	}
 	if os.is_atty(0) == 0 && files.len == 0 {
@@ -107,9 +107,7 @@ fn main() {
 		mut worker_command_array := cli_args_no_files.clone()
 		worker_command_array << ['-worker', util.quote_path(fpath)]
 		worker_cmd := worker_command_array.join(' ')
-		if foptions.is_verbose {
-			eprintln('vfmt worker_cmd: $worker_cmd')
-		}
+		foptions.vlog('vfmt worker_cmd: $worker_cmd')
 		worker_result := os.execute(worker_cmd)
 		// Guard against a possibly crashing worker process.
 		if worker_result.exit_code != 0 {
@@ -149,43 +147,44 @@ fn main() {
 	}
 }
 
-fn (foptions &FormatOptions) format_file(file string) {
+fn setup_preferences_and_table() (&pref.Preferences, &ast.Table) {
+	table := ast.new_table()
 	mut prefs := pref.new_preferences()
 	prefs.is_fmt = true
+	prefs.skip_warnings = true
+	return prefs, table
+}
+
+fn (foptions &FormatOptions) vlog(msg string) {
 	if foptions.is_verbose {
-		eprintln('vfmt2 running fmt.fmt over file: $file')
+		eprintln(msg)
 	}
-	table := ast.new_table()
-	// checker := checker.new_checker(table, prefs)
+}
+
+fn (foptions &FormatOptions) format_file(file string) {
+	foptions.vlog('vfmt2 running fmt.fmt over file: $file')
+	prefs, table := setup_preferences_and_table()
 	file_ast := parser.parse_file(file, table, .parse_comments, prefs)
-	// checker.check(file_ast)
+	// checker.new_checker(table, prefs).check(file_ast)
 	formatted_content := fmt.fmt(file_ast, table, prefs, foptions.is_debug)
 	file_name := os.file_name(file)
 	ulid := rand.ulid()
 	vfmt_output_path := os.join_path(vtmp_folder, 'vfmt_${ulid}_$file_name')
 	os.write_file(vfmt_output_path, formatted_content) or { panic(err) }
-	if foptions.is_verbose {
-		eprintln('fmt.fmt worked and $formatted_content.len bytes were written to $vfmt_output_path .')
-	}
+	foptions.vlog('fmt.fmt worked and $formatted_content.len bytes were written to $vfmt_output_path .')
 	eprintln('$formatted_file_token$vfmt_output_path')
 }
 
 fn (foptions &FormatOptions) format_pipe() {
-	mut prefs := pref.new_preferences()
-	prefs.is_fmt = true
-	if foptions.is_verbose {
-		eprintln('vfmt2 running fmt.fmt over stdin')
-	}
+	foptions.vlog('vfmt2 running fmt.fmt over stdin')
+	prefs, table := setup_preferences_and_table()
 	input_text := os.get_raw_lines_joined()
-	table := ast.new_table()
-	// checker := checker.new_checker(table, prefs)
 	file_ast := parser.parse_text(input_text, '', table, .parse_comments, prefs)
-	// checker.check(file_ast)
+	// checker.new_checker(table, prefs).check(file_ast)
 	formatted_content := fmt.fmt(file_ast, table, prefs, foptions.is_debug)
 	print(formatted_content)
-	if foptions.is_verbose {
-		eprintln('fmt.fmt worked and $formatted_content.len bytes were written to stdout.')
-	}
+	flush_stdout()
+	foptions.vlog('fmt.fmt worked and $formatted_content.len bytes were written to stdout.')
 }
 
 fn print_compiler_options(compiler_params &pref.Preferences) {
@@ -201,34 +200,21 @@ fn print_compiler_options(compiler_params &pref.Preferences) {
 	eprintln('  is_script: $compiler_params.is_script ')
 }
 
-fn (foptions &FormatOptions) post_process_file(file string, formatted_file_path string) ? {
+fn (mut foptions FormatOptions) find_diff_cmd() string {
+	if foptions.diff_cmd != '' {
+		return foptions.diff_cmd
+	}
+	if foptions.is_verify || foptions.is_diff {
+		foptions.diff_cmd = diff.find_working_diff_command() or {
+			eprintln(err)
+			exit(1)
+		}
+	}
+	return foptions.diff_cmd
+}
+
+fn (mut foptions FormatOptions) post_process_file(file string, formatted_file_path string) ? {
 	if formatted_file_path.len == 0 {
-		return
-	}
-	if foptions.is_diff {
-		diff_cmd := diff.find_working_diff_command() or {
-			eprintln(err)
-			return
-		}
-		if foptions.is_verbose {
-			eprintln('Using diff command: $diff_cmd')
-		}
-		diff := diff.color_compare_files(diff_cmd, file, formatted_file_path)
-		if diff.len > 0 {
-			println(diff)
-		}
-		return
-	}
-	if foptions.is_verify {
-		diff_cmd := diff.find_working_diff_command() or {
-			eprintln(err)
-			return
-		}
-		x := diff.color_compare_files(diff_cmd, file, formatted_file_path)
-		if x.len != 0 {
-			println("$file is not vfmt'ed")
-			return error('')
-		}
 		return
 	}
 	fc := os.read_file(file) or {
@@ -240,6 +226,25 @@ fn (foptions &FormatOptions) post_process_file(file string, formatted_file_path 
 		return
 	}
 	is_formatted_different := fc != formatted_fc
+	if foptions.is_diff {
+		if !is_formatted_different {
+			return
+		}
+		diff_cmd := foptions.find_diff_cmd()
+		foptions.vlog('Using diff command: $diff_cmd')
+		diff := diff.color_compare_files(diff_cmd, file, formatted_file_path)
+		if diff.len > 0 {
+			println(diff)
+		}
+		return
+	}
+	if foptions.is_verify {
+		if !is_formatted_different {
+			return
+		}
+		println("$file is not vfmt'ed")
+		return error('')
+	}
 	if foptions.is_c {
 		if is_formatted_different {
 			eprintln('File is not formatted: $file')
@@ -275,6 +280,7 @@ fn (foptions &FormatOptions) post_process_file(file string, formatted_file_path 
 		return
 	}
 	print(formatted_fc)
+	flush_stdout()
 }
 
 fn (f FormatOptions) str() string {

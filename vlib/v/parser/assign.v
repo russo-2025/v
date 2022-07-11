@@ -41,53 +41,77 @@ fn (mut p Parser) check_undefined_variables(exprs []ast.Expr, val ast.Expr) ? {
 		}
 		ast.ArrayInit {
 			if val.has_cap {
-				p.check_undefined_variables(exprs, val.cap_expr) ?
+				p.check_undefined_variables(exprs, val.cap_expr)?
 			}
 			if val.has_len {
-				p.check_undefined_variables(exprs, val.len_expr) ?
+				p.check_undefined_variables(exprs, val.len_expr)?
 			}
 			if val.has_default {
-				p.check_undefined_variables(exprs, val.default_expr) ?
+				p.check_undefined_variables(exprs, val.default_expr)?
 			}
 			for expr in val.exprs {
-				p.check_undefined_variables(exprs, expr) ?
+				p.check_undefined_variables(exprs, expr)?
 			}
 		}
 		ast.CallExpr {
-			p.check_undefined_variables(exprs, val.left) ?
+			p.check_undefined_variables(exprs, val.left)?
 			for arg in val.args {
-				p.check_undefined_variables(exprs, arg.expr) ?
+				p.check_undefined_variables(exprs, arg.expr)?
 			}
 		}
 		ast.InfixExpr {
-			p.check_undefined_variables(exprs, val.left) ?
-			p.check_undefined_variables(exprs, val.right) ?
+			p.check_undefined_variables(exprs, val.left)?
+			p.check_undefined_variables(exprs, val.right)?
+		}
+		ast.IfExpr {
+			p.check_undefined_variables(exprs, val.left)?
+			for branch in val.branches {
+				p.check_undefined_variables(exprs, branch.cond)?
+				for stmt in branch.stmts {
+					if stmt is ast.ExprStmt {
+						p.check_undefined_variables(exprs, stmt.expr)?
+					}
+				}
+			}
 		}
 		ast.MapInit {
 			for key in val.keys {
-				p.check_undefined_variables(exprs, key) ?
+				p.check_undefined_variables(exprs, key)?
 			}
 			for value in val.vals {
-				p.check_undefined_variables(exprs, value) ?
+				p.check_undefined_variables(exprs, value)?
+			}
+		}
+		ast.MatchExpr {
+			p.check_undefined_variables(exprs, val.cond)?
+			for branch in val.branches {
+				for expr in branch.exprs {
+					p.check_undefined_variables(exprs, expr)?
+				}
+				for stmt in branch.stmts {
+					if stmt is ast.ExprStmt {
+						p.check_undefined_variables(exprs, stmt.expr)?
+					}
+				}
 			}
 		}
 		ast.ParExpr {
-			p.check_undefined_variables(exprs, val.expr) ?
+			p.check_undefined_variables(exprs, val.expr)?
 		}
 		ast.PostfixExpr {
-			p.check_undefined_variables(exprs, val.expr) ?
+			p.check_undefined_variables(exprs, val.expr)?
 		}
 		ast.PrefixExpr {
-			p.check_undefined_variables(exprs, val.right) ?
+			p.check_undefined_variables(exprs, val.right)?
 		}
 		ast.StringInterLiteral {
 			for expr_ in val.exprs {
-				p.check_undefined_variables(exprs, expr_) ?
+				p.check_undefined_variables(exprs, expr_)?
 			}
 		}
 		ast.StructInit {
 			for field in val.fields {
-				p.check_undefined_variables(exprs, field.expr) ?
+				p.check_undefined_variables(exprs, field.expr)?
 			}
 		}
 		else {}
@@ -116,6 +140,16 @@ fn (mut p Parser) check_cross_variables(exprs []ast.Expr, val ast.Expr) bool {
 		ast.InfixExpr {
 			return p.check_cross_variables(exprs, val.left)
 				|| p.check_cross_variables(exprs, val.right)
+		}
+		ast.ParExpr {
+			return p.check_cross_variables(exprs, val.expr)
+		}
+		ast.CallExpr {
+			for arg in val.args {
+				if p.check_cross_variables(exprs, arg.expr) {
+					return true
+				}
+			}
 		}
 		ast.PrefixExpr {
 			return p.check_cross_variables(exprs, val.right)
@@ -151,7 +185,8 @@ fn (mut p Parser) partial_assign_stmt(left []ast.Expr, left_comments []ast.Comme
 	mut has_cross_var := false
 	mut is_static := false
 	mut is_volatile := false
-	for i, lx in left {
+	for i, lx_ in left {
+		mut lx := unsafe { lx_ }
 		match mut lx {
 			ast.Ident {
 				if op == .decl_assign {
@@ -159,10 +194,9 @@ fn (mut p Parser) partial_assign_stmt(left []ast.Expr, left_comments []ast.Comme
 						return p.error_with_pos('redefinition of `$lx.name`', lx.pos)
 					}
 					mut share := ast.ShareType(0)
-					if lx.info is ast.IdentVar {
-						iv := lx.info as ast.IdentVar
-						share = iv.share
-						if iv.is_static {
+					if mut lx.info is ast.IdentVar {
+						share = lx.info.share
+						if lx.info.is_static {
 							if !p.pref.translated && !p.is_translated && !p.pref.is_fmt
 								&& !p.inside_unsafe_fn {
 								return p.error_with_pos('static variables are supported only in translated mode or in [unsafe] fn',
@@ -170,11 +204,10 @@ fn (mut p Parser) partial_assign_stmt(left []ast.Expr, left_comments []ast.Comme
 							}
 							is_static = true
 						}
-						if iv.is_volatile {
+						if lx.info.is_volatile {
 							is_volatile = true
 						}
 					}
-					r0 := right[0]
 					mut v := ast.Var{
 						name: lx.name
 						expr: if left.len == right.len { right[i] } else { ast.empty_expr() }
@@ -184,6 +217,7 @@ fn (mut p Parser) partial_assign_stmt(left []ast.Expr, left_comments []ast.Comme
 						is_stack_obj: p.inside_for
 					}
 					if p.pref.autofree {
+						r0 := right[0]
 						if r0 is ast.CallExpr {
 							// Set correct variable position (after the or block)
 							// so that autofree doesn't free it in cgen before
@@ -210,14 +244,11 @@ fn (mut p Parser) partial_assign_stmt(left []ast.Expr, left_comments []ast.Comme
 			ast.PrefixExpr {}
 			ast.SelectorExpr {
 				if op == .decl_assign {
-					return p.error_with_pos('struct fields can only be declared during the initialization',
-						lx.pos)
+					return p.error_with_pos('use assignment `=` instead of declaration `:=` when modifying struct fields',
+						pos)
 				}
 			}
-			else {
-				// TODO: parexpr ( check vars)
-				// else { p.error_with_pos('unexpected `${typeof(lx)}`', lx.pos()) }
-			}
+			else {}
 		}
 	}
 	if op == .decl_assign {

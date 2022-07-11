@@ -59,7 +59,7 @@ fn (mut g JsGen) final_gen_str(typ StrType) {
 		g.gen_str_for_option(typ.typ, styp, str_fn_name)
 		return
 	}
-	match mut sym.info {
+	match sym.info {
 		ast.Alias {
 			if sym.info.is_import {
 				g.gen_str_default(sym, styp, str_fn_name)
@@ -207,7 +207,7 @@ fn (mut g JsGen) gen_str_default(sym ast.TypeSymbol, styp string, str_fn_name st
 
 	g.definitions.writeln('function ${str_fn_name}(it) {')
 	if convertor == 'bool' {
-		g.definitions.writeln('\tlet tmp1 = string__plus(new string("${styp}("), it.valueOf() ? new string("true") : new string("false"));')
+		g.definitions.writeln('\tlet tmp1 = string__plus(new string("${styp}("), it.valueOf()? new string("true") : new string("false"));')
 	} else {
 		g.definitions.writeln('\tlet tmp1 = string__plus(new string("${styp}("), new string(${typename_}_str(($convertor)it).str));')
 	}
@@ -413,6 +413,8 @@ fn (mut g JsGen) fn_decl_str(info ast.FnType) string {
 	fn_str += ')'
 	if info.func.return_type == ast.ovoid_type {
 		fn_str += ' ?'
+	} else if info.func.return_type == ast.rvoid_type {
+		fn_str += ' !'
 	} else if info.func.return_type != ast.void_type {
 		x := util.strip_main_name(g.table.get_type_name(g.unwrap_generic(info.func.return_type)))
 		if info.func.return_type.has_flag(.optional) {
@@ -466,7 +468,7 @@ fn (mut g JsGen) gen_str_for_array(info ast.Array, styp string, str_fn_name stri
 	is_elem_ptr := typ.is_ptr()
 	sym_has_str_method, str_method_expects_ptr, _ := sym.str_method_info()
 	mut elem_str_fn_name := g.get_str_fn(typ)
-	if sym.kind == .byte {
+	if sym.kind == .u8 {
 		elem_str_fn_name = elem_str_fn_name + '_escaped'
 	}
 
@@ -497,7 +499,7 @@ fn (mut g JsGen) gen_str_for_array(info ast.Array, styp string, str_fn_name stri
 			// g.definitions.writeln('\t\tstring x = str_intp(2, _MOV((StrIntpData[]){{new string("\'"), $c.si_s_code, {.d_s = it }}, {new string("\'"), 0, {.d_c = 0 }}}));\n')
 		} else {
 			// There is a custom .str() method, so use it.
-			// NB: we need to take account of whether the user has defined
+			// Note: we need to take account of whether the user has defined
 			// `fn (x T) str() {` or `fn (x &T) str() {`, and convert accordingly
 			deref, deref_label := deref_kind(str_method_expects_ptr, is_elem_ptr, typ)
 			g.definitions.writeln('\t\tstrings__Builder_write_string(sb, new string("$deref_label"));')
@@ -643,7 +645,7 @@ fn (mut g JsGen) gen_str_for_map(info ast.Map, styp string, str_fn_name string) 
 }
 
 fn (g &JsGen) type_to_fmt(typ ast.Type) StrIntpType {
-	if typ == ast.byte_type_idx {
+	if typ == ast.u8_type_idx {
 		return .si_u8
 	}
 	if typ == ast.char_type_idx {
@@ -764,7 +766,7 @@ fn (mut g JsGen) gen_str_for_struct(info ast.Struct, styp string, str_fn_name st
 				fn_builder.write_string('tos2((byteptr)$func)')
 			} else {
 				if field.typ.is_ptr() && sym.kind == .struct_ {
-					fn_builder.write_string('(indent_count > 25) ? new string("<probably circular>") : ')
+					fn_builder.write_string('(indent_count > 25)? new string("<probably circular>") : ')
 				}
 				fn_builder.write_string(func)
 			}

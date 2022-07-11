@@ -77,6 +77,8 @@ vls.log
 fn gitattributes_content() string {
 	return '*.v linguist-language=V text=auto eol=lf
 *.vv linguist-language=V text=auto eol=lf
+*.vsh linguist-language=V text=auto eol=lf
+**/v.mod linguist-language=V text=auto eol=lf
 '
 }
 
@@ -158,7 +160,7 @@ fn create(args []string) {
 	if c.version == '' {
 		c.version = default_version
 	}
-	default_license := 'MIT'
+	default_license := os.getenv_opt('VLICENSE') or { 'MIT' }
 	c.license = os.input('Input your project license: ($default_license) ')
 	if c.license == '' {
 		c.license = default_license

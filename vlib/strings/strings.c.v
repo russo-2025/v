@@ -1,7 +1,7 @@
 module strings
 
 // strings.repeat - fill a string with `n` repetitions of the character `c`
-pub fn repeat(c byte, n int) string {
+pub fn repeat(c u8, n int) string {
 	if n <= 0 {
 		return ''
 	}
@@ -14,7 +14,7 @@ pub fn repeat(c byte, n int) string {
 }
 
 // strings.repeat_string - gives you `n` repetitions of the substring `s`
-// NB: strings.repeat, that repeats a single byte, is between 2x
+// Note: strings.repeat, that repeats a single byte, is between 2x
 // and 24x faster than strings.repeat_string called for a 1 char string.
 pub fn repeat_string(s string, n int) string {
 	if n <= 0 || s.len == 0 {

@@ -4,11 +4,7 @@
 </p>
 <h1>The V Programming Language</h1>
 
-[vlang.io](https://vlang.io) |
-[Docs](https://github.com/vlang/v/blob/master/doc/docs.md) |
-[Changelog](https://github.com/vlang/v/blob/master/CHANGELOG.md) |
-[Speed](https://fast.vlang.io/) |
-[Contributing & compiler design](https://github.com/vlang/v/blob/master/CONTRIBUTING.md)
+[vlang.io](https://vlang.io) | [Docs](https://github.com/vlang/v/blob/master/doc/docs.md) | [Changelog](https://github.com/vlang/v/blob/master/CHANGELOG.md) | [Speed](https://fast.vlang.io/) | [Contributing & compiler design](https://github.com/vlang/v/blob/master/CONTRIBUTING.md)
 
 </div>
 <div align="center">
@@ -25,13 +21,13 @@
 
 ## Key Features of V
 
-- Simplicity: the language can be learned in less than an hour
+- Simplicity: the language can be learned in over a weekend
 - Fast compilation: ≈110k loc/s with a Clang backend,
     ≈1 million loc/s with native and tcc backends *(Intel i5-7500, SSD, no optimization)* ([demo video](https://www.youtube.com/watch?v=pvP6wmcl_Sc))
 - Easy to develop: V compiles itself in less than a second
 - Performance: as fast as C (V's main backend compiles to human-readable C)
 - Safety: no null, no globals, no undefined behavior, immutability by default
-- C to V translation
+- C to V translation ([Translating DOOM demo video](https://www.youtube.com/watch?v=6oXrz3oRoEg))
 - Hot code reloading
 - [Innovative memory management](https://vlang.io/#memory) ([demo video](https://www.youtube.com/watch?v=gmB8ea8uLsM))
 - [Cross-platform UI library](https://github.com/vlang/ui)
@@ -60,22 +56,39 @@ Unlike many other languages, V is not going to be always changing, with new feat
 being introduced and old features modified. It is always going to be a small and simple
 language, very similar to the way it is right now.
 
-## Installing V from source
+## Installing V - from source *(preferred method)*
 
-### Linux, macOS, Windows, *BSD, Solaris, WSL, Android, Raspbian
+### Linux, macOS, Windows, *BSD, Solaris, WSL, Android, etc.
 
+Usually installing V is quite simple if you have an environment that already has a
+functional `git` installation.
+
+* *(* ***PLEASE NOTE:*** *If you run into any trouble or you have a different operating
+system or Linux distribution that doesn't install or work immediately, please see
+[Installation Issues](https://github.com/vlang/v/discussions/categories/installation-issues)
+and search for your OS and problem. If you can't find your problem, please add it to an
+existing discussion if one exists for your OS, or create a new one if a main discussion
+doesn't yet exist for your OS.)*
+
+
+To get started, simply try to execute the following in your terminal/shell:
 ```bash
 git clone https://github.com/vlang/v
 cd v
 make
+# HINT: Using Windows?: run make.bat in the cmd.exe shell
 ```
 
-That's it! Now you have a V executable at `[path to V repo]/v`.
+That should be it and you should find your V executable at `[path to V repo]/v`.
 `[path to V repo]` can be anywhere.
 
-(On Windows `make` means running `make.bat`, so make sure you use `cmd.exe`)
+(As in the hint above, on Windows `make` means running `make.bat`, so make sure you use
+the `cmd.exe` terminal.)
 
 Now you can try `./v run examples/hello_world.v` (`v.exe` on Windows).
+
+* *Trouble? Please see the note above and link to
+[Installation Issues](https://github.com/vlang/v/discussions/categories/installation-issues) for help.*
 
 V is constantly being updated. To update V, simply run:
 
@@ -151,7 +164,7 @@ docker run --rm -it vlang:latest
 
 </details>
 
-### Testing and running the examples
+## Testing and running the examples
 
 Make sure V can compile itself:
 
@@ -274,6 +287,10 @@ Vinix is an OS/kernel that already runs bash, GCC, V, and nano.
 https://github.com/vlang/vinix
 
 <img src="https://github.com/vlang/vinix/raw/main/screenshot.png?raw=true">
+
+## Acknowledgement
+
+V thanks Fabrice Bellard for his original work on the [TCC - Tiny C Compiler](https://bellard.org/tcc/). Note the TCC website is old; the current TCC repository can be found [here](https://repo.or.cz/w/tinycc.git).  V utilizes pre-built TCC binaries located at [https://github.com/vlang/tccbin/](https://github.com/vlang/tccbin/).
 
 ## Troubleshooting
 

@@ -33,8 +33,13 @@ const (
 		'\t\t\t\t\t\t\t',
 		'\t\t\t\t\t\t\t\t',
 		'\t\t\t\t\t\t\t\t\t',
+		'\t\t\t\t\t\t\t\t\t\t',
 	]
 )
+
+pub fn module_is_builtin(mod string) bool {
+	return mod in util.builtin_module_parts
+}
 
 pub fn tabs(n int) string {
 	return if n < util.const_tabs.len { util.const_tabs[n] } else { '\t'.repeat(n) }
@@ -44,7 +49,7 @@ pub fn tabs(n int) string {
 pub fn set_vroot_folder(vroot_path string) {
 	// Preparation for the compiler module:
 	// VEXE env variable is needed so that compiler.vexe_path() can return it
-	// later to whoever needs it. NB: guessing is a heuristic, so only try to
+	// later to whoever needs it. Note: guessing is a heuristic, so only try to
 	// guess the V executable name, if VEXE has not been set already.
 	vexe := os.getenv('VEXE')
 	if vexe == '' {
@@ -72,10 +77,10 @@ pub fn resolve_env_value(str string, check_for_presence bool) ?string {
 	at := str.index(env_ident) or {
 		return error('no "$env_ident' + '...\')" could be found in "$str".')
 	}
-	mut ch := byte(`.`)
+	mut ch := u8(`.`)
 	mut env_lit := ''
 	for i := at + env_ident.len; i < str.len && ch != `)`; i++ {
-		ch = byte(str[i])
+		ch = u8(str[i])
 		if ch.is_letter() || ch.is_digit() || ch == `_` {
 			env_lit += ch.ascii_str()
 		} else {
@@ -164,14 +169,26 @@ pub fn launch_tool(is_verbose bool, tool_name string, args []string) {
 			// .v line numbers, to ease diagnostic in #bugs and issues.
 			compilation_command += ' -g '
 		}
+		if tool_name == 'vfmt' {
+			compilation_command += ' -d vfmt '
+		}
 		compilation_command += os.quoted_path(tool_source)
 		if is_verbose {
 			println('Compiling $tool_name with: "$compilation_command"')
 		}
-		tool_compilation := os.execute_or_exit(compilation_command)
-		if tool_compilation.exit_code != 0 {
-			eprintln('cannot compile `$tool_source`: \n$tool_compilation.output')
-			exit(1)
+
+		retry_max_count := 3
+		for i in 0 .. retry_max_count {
+			tool_compilation := os.execute(compilation_command)
+			if tool_compilation.exit_code == 0 {
+				break
+			} else {
+				if i == retry_max_count - 1 {
+					eprintln('cannot compile `$tool_source`: \n$tool_compilation.output')
+					exit(1)
+				}
+				time.sleep(20 * time.millisecond)
+			}
 		}
 	}
 	$if windows {
@@ -185,7 +202,7 @@ pub fn launch_tool(is_verbose bool, tool_name string, args []string) {
 	exit(2)
 }
 
-// NB: should_recompile_tool/4 compares unix timestamps that have 1 second resolution
+// Note: should_recompile_tool/4 compares unix timestamps that have 1 second resolution
 // That means that a tool can get recompiled twice, if called in short succession.
 // TODO: use a nanosecond mtime timestamp, if available.
 pub fn should_recompile_tool(vexe string, tool_source string, tool_name string, tool_exe string) bool {
@@ -282,6 +299,9 @@ pub fn cached_read_source_file(path string) ?string {
 		cache = &SourceCache{}
 	}
 
+	$if trace_cached_read_source_file ? {
+		println('cached_read_source_file            $path')
+	}
 	if path.len == 0 {
 		unsafe { cache.sources.free() }
 		unsafe { free(cache) }
@@ -292,9 +312,15 @@ pub fn cached_read_source_file(path string) ?string {
 	// eprintln('>> cached_read_source_file path: $path')
 	if res := cache.sources[path] {
 		// eprintln('>> cached')
+		$if trace_cached_read_source_file_cached ? {
+			println('cached_read_source_file     cached $path')
+		}
 		return res
 	}
 	// eprintln('>> not cached | cache.sources.len: $cache.sources.len')
+	$if trace_cached_read_source_file_not_cached ? {
+		println('cached_read_source_file not cached $path')
+	}
 	raw_text := os.read_file(path) or { return error('failed to open $path') }
 	res := skip_bom(raw_text)
 	cache.sources[path] = res
@@ -371,7 +397,7 @@ and the existing module `$modulename` may still work.')
 	if is_verbose {
 		eprintln('check_module_is_installed: cloning from $murl ...')
 	}
-	cloning_res := os.execute('git clone $murl $mpath')
+	cloning_res := os.execute('git clone ${os.quoted_path(murl)} ${os.quoted_path(mpath)}')
 	if cloning_res.exit_code < 0 {
 		return error_with_code('git is not installed, error: $cloning_res.output', cloning_res.exit_code)
 	}
@@ -467,7 +493,7 @@ pub fn get_vtmp_folder() string {
 	uid := os.getuid()
 	vtmp = os.join_path_single(os.temp_dir(), 'v_$uid')
 	if !os.exists(vtmp) || !os.is_dir(vtmp) {
-		os.mkdir_all(vtmp) or { panic(err) }
+		os.mkdir_all(vtmp, mode: 0o700) or { panic(err) } // keep directory private
 	}
 	os.setenv('VTMP', vtmp, true)
 	return vtmp

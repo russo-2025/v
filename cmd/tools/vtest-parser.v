@@ -54,7 +54,7 @@ fn main() {
 		context.pref = &pref.Preferences{
 			output_mode: .silent
 		}
-		mut source := os.read_file(context.path) ?
+		mut source := os.read_file(context.path)?
 		source = source[..context.cut_index]
 
 		go fn (ms int) {
@@ -103,7 +103,7 @@ fn process_cli_args() &Context {
 	fp.description('Test the V parser, by parsing each .v file in each PATH,\n' +
 		'as if it was typed character by character by the user.\n' +
 		'A PATH can be either a folder, or a specific .v file.\n' +
-		'NB: you *have to quote* the PATH, if it contains spaces/punctuation.')
+		'Note: you *have to quote* the PATH, if it contains spaces/punctuation.')
 	fp.arguments_description('PATH1 PATH2 ...')
 	fp.skip_executable()
 	context.is_help = fp.bool('help', `h`, false, 'Show help/usage screen.')
@@ -121,7 +121,7 @@ fn process_cli_args() &Context {
 		exit(0)
 	}
 	context.all_paths = fp.finalize() or {
-		context.error(err.msg)
+		context.error(err.msg())
 		exit(1)
 	}
 	if !context.is_worker && context.all_paths.len == 0 {

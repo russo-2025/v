@@ -29,7 +29,7 @@ pub fn (mut con TcpConn) set_blocking(state bool) ? {
 		if !con.is_blocking {
 			t = 1
 		}
-		socket_error(C.ioctlsocket(con.sock.handle, fionbio, &t)) ?
+		socket_error(C.ioctlsocket(con.sock.handle, fionbio, &t))?
 	} $else {
 		mut flags := C.fcntl(con.sock.handle, C.F_GETFL, 0)
 		if state {
@@ -37,13 +37,13 @@ pub fn (mut con TcpConn) set_blocking(state bool) ? {
 		} else {
 			flags |= C.O_NONBLOCK
 		}
-		socket_error(C.fcntl(con.sock.handle, C.F_SETFL, flags)) ?
+		socket_error(C.fcntl(con.sock.handle, C.F_SETFL, flags))?
 	}
 }
 
 // read_line is a *simple*, *non customizable*, blocking line reader.
 // It will return a line, ending with LF, or just '', on EOF.
-// NB: if you want more control over the buffer, please use a buffered IO
+// Note: if you want more control over the buffer, please use a buffered IO
 // reader instead: `io.new_buffered_reader({reader: io.make_reader(con)})`
 pub fn (mut con TcpConn) read_line() string {
 	return con.read_line_max(net.max_read_line_len)
@@ -57,7 +57,7 @@ pub fn (mut con TcpConn) read_line_max(max_line_len int) string {
 	if !con.is_blocking {
 		con.set_blocking(true) or {}
 	}
-	mut buf := [net.max_read]byte{} // where C.recv will store the network data
+	mut buf := [net.max_read]u8{} // where C.recv will store the network data
 	mut res := strings.new_builder(net.max_read) // The final result, including the ending \n.
 	defer {
 		unsafe { res.free() }

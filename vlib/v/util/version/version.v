@@ -2,11 +2,11 @@ module version
 
 import os
 
-pub const v_version = '0.2.4'
+pub const v_version = '0.3.0'
 
 // vhash() returns the build string C.V_COMMIT_HASH . See cmd/tools/gen_vc.v .
 pub fn vhash() string {
-	mut buf := [50]byte{}
+	mut buf := [50]u8{}
 	buf[0] = 0
 	unsafe {
 		bp := &buf[0]
@@ -39,7 +39,7 @@ pub fn full_v_version(is_verbose bool) string {
 // relevant files in the .git/ folder, or if that is not possible
 // for example when using a V from a V binary release, that does not have .git/
 // defaults to getting the predefined C constant again.
-// NB: githash(true) must be called only when v detects that it builds itself.
+// Note: githash(true) must be called only when v detects that it builds itself.
 // For all other programs, githash(false) should be used.
 pub fn githash(should_get_from_filesystem bool) string {
 	for {
@@ -75,7 +75,7 @@ pub fn githash(should_get_from_filesystem bool) string {
 		}
 		break
 	}
-	mut buf := [50]byte{}
+	mut buf := [50]u8{}
 	buf[0] = 0
 	unsafe {
 		bp := &buf[0]

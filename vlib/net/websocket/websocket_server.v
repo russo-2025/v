@@ -9,7 +9,7 @@ import rand
 // Server represents a websocket server connection
 pub struct Server {
 mut:
-	logger                  &log.Log // logger used to log
+	logger                  &log.Logger           // logger used to log
 	ls                      &net.TcpListener      // listener used to get incoming connection to socket
 	accept_client_callbacks []AcceptClientFn      // accept client callback functions
 	message_callbacks       []MessageEventHandler // new message callback functions
@@ -25,7 +25,7 @@ pub mut:
 }
 
 // ServerClient represents a connected client
-struct ServerClient {
+pub struct ServerClient {
 pub:
 	resource_name string // resource that the client access
 	client_key    string // unique key of client
@@ -34,15 +34,20 @@ pub mut:
 	client &Client
 }
 
+[params]
+pub struct ServerOpt {
+	logger &log.Logger = &log.Logger(&log.Log{
+	level: .info
+})
+}
+
 // new_server instance a new websocket server on provided port and route
-pub fn new_server(family net.AddrFamily, port int, route string) &Server {
+pub fn new_server(family net.AddrFamily, port int, route string, opt ServerOpt) &Server {
 	return &Server{
 		ls: 0
 		family: family
 		port: port
-		logger: &log.Log{
-			level: .info
-		}
+		logger: opt.logger
 		state: .closed
 	}
 }
@@ -55,7 +60,7 @@ pub fn (mut s Server) set_ping_interval(seconds int) {
 // listen start listen and process to incoming connections from websocket clients
 pub fn (mut s Server) listen() ? {
 	s.logger.info('websocket server: start listen on port $s.port')
-	s.ls = net.listen_tcp(s.family, ':$s.port') ?
+	s.ls = net.listen_tcp(s.family, ':$s.port')?
 	s.set_state(.open)
 	go s.handle_ping()
 	for {
@@ -110,15 +115,15 @@ fn (mut s Server) serve_client(mut c Client) ? {
 	defer {
 		c.logger.debug('server-> End serve client ($c.id)')
 	}
-	mut handshake_response, mut server_client := s.handle_server_handshake(mut c) ?
-	accept := s.send_connect_event(mut server_client) ?
+	mut handshake_response, mut server_client := s.handle_server_handshake(mut c)?
+	accept := s.send_connect_event(mut server_client)?
 	if !accept {
 		s.logger.debug('server-> client not accepted')
-		c.shutdown_socket() ?
+		c.shutdown_socket()?
 		return
 	}
 	// the client is accepted
-	c.socket_write(handshake_response.bytes()) ?
+	c.socket_write(handshake_response.bytes())?
 	lock  {
 		s.clients[server_client.client.id] = server_client
 	}
@@ -160,7 +165,7 @@ fn (mut s Server) setup_callbacks(mut sc ServerClient) {
 
 // accept_new_client creates a new client instance for client that connects to the socket
 fn (mut s Server) accept_new_client() ?&Client {
-	mut new_conn := s.ls.accept() ?
+	mut new_conn := s.ls.accept()?
 	c := &Client{
 		is_server: true
 		conn: new_conn

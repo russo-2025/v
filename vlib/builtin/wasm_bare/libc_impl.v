@@ -1,13 +1,18 @@
 module builtin
 
-import dlmalloc
+//__global global_allocator dlmalloc.Dlmalloc
 
-__global global_allocator dlmalloc.Dlmalloc
+[unsafe]
+pub fn __malloc(size usize) voidptr {
+	unsafe {
+		return C.malloc(int(size))
+	}
+}
 
 [unsafe]
 pub fn memcpy(dest &C.void, src &C.void, n usize) &C.void {
-	dest_ := unsafe { &byte(dest) }
-	src_ := unsafe { &byte(src) }
+	dest_ := unsafe { &u8(dest) }
+	src_ := unsafe { &u8(src) }
 	unsafe {
 		for i in 0 .. int(n) {
 			dest_[i] = src_[i]
@@ -16,15 +21,9 @@ pub fn memcpy(dest &C.void, src &C.void, n usize) &C.void {
 	return unsafe { dest }
 }
 
-[export: 'malloc']
-[unsafe]
-fn __malloc(n usize) &C.void {
-	return unsafe { global_allocator.malloc(n) }
-}
-
 [unsafe]
 fn strlen(_s &C.void) usize {
-	s := unsafe { &byte(_s) }
+	s := unsafe { &u8(_s) }
 	mut i := 0
 	for ; unsafe { s[i] } != 0; i++ {}
 	return usize(i)
@@ -63,8 +62,8 @@ fn memset(s &C.void, c int, n usize) &C.void {
 
 [unsafe]
 fn memmove(dest &C.void, src &C.void, n usize) &C.void {
-	dest_ := unsafe { &byte(dest) }
-	src_ := unsafe { &byte(src) }
+	dest_ := unsafe { &u8(dest) }
+	src_ := unsafe { &u8(src) }
 	mut temp_buf := unsafe { malloc(int(n)) }
 	for i in 0 .. int(n) {
 		unsafe {
@@ -94,8 +93,8 @@ fn getchar() int {
 }
 
 fn memcmp(a &C.void, b &C.void, n usize) int {
-	a_ := unsafe { &byte(a) }
-	b_ := unsafe { &byte(b) }
+	a_ := unsafe { &u8(a) }
+	b_ := unsafe { &u8(b) }
 	for i in 0 .. int(n) {
 		if unsafe { a_[i] != b_[i] } {
 			unsafe {
@@ -104,14 +103,6 @@ fn memcmp(a &C.void, b &C.void, n usize) int {
 		}
 	}
 	return 0
-}
-
-[export: 'free']
-[unsafe]
-fn __free(ptr &C.void) {
-	unsafe {
-		global_allocator.free_(ptr)
-	}
 }
 
 fn vsprintf(str &char, format &char, ap &byte) int {
@@ -169,5 +160,5 @@ fn __qsort(base voidptr, nmemb usize, size usize, sort_cb FnSortCB) {
 }
 
 fn init_global_allocator() {
-	global_allocator = dlmalloc.new(get_wasm_allocator())
+	// global_allocator = dlmalloc.new(get_wasm_allocator())
 }

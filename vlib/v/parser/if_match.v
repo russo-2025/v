@@ -27,6 +27,9 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 	mut prev_guard := false
 	for p.tok.kind in [.key_if, .key_else] {
 		p.inside_if = true
+		if is_comptime {
+			p.inside_comptime_if = true
+		}
 		start_pos := if is_comptime { p.prev_tok.pos().extend(p.tok.pos()) } else { p.tok.pos() }
 		if p.tok.kind == .key_else {
 			comments << p.eat_comments()
@@ -40,6 +43,7 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 				// else {
 				has_else = true
 				p.inside_if = false
+				p.inside_comptime_if = false
 				end_pos := p.prev_tok.pos()
 				body_pos := p.tok.pos()
 				p.open_scope()
@@ -107,6 +111,10 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 			p.check(.decl_assign)
 			comments << p.eat_comments()
 			expr := p.expr(0)
+			if expr !in [ast.CallExpr, ast.IndexExpr, ast.PrefixExpr] {
+				p.error_with_pos('if guard condition expression is illegal, it should return optional',
+					expr.pos())
+			}
 
 			cond = ast.IfGuardExpr{
 				vars: vars
@@ -124,13 +132,20 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 		} else {
 			prev_guard = false
 			p.comptime_if_cond = true
+			p.inside_if_cond = true
 			cond = p.expr(0)
+			p.inside_if_cond = false
+			if p.if_cond_comments.len > 0 {
+				comments << p.if_cond_comments
+				p.if_cond_comments = []
+			}
 			p.comptime_if_cond = false
 		}
 		comments << p.eat_comments()
 		end_pos := p.prev_tok.pos()
 		body_pos := p.tok.pos()
 		p.inside_if = false
+		p.inside_comptime_if = false
 		p.open_scope()
 		stmts := p.parse_block_no_scope(false)
 		branches << ast.IfBranch{
@@ -173,6 +188,24 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 	}
 }
 
+fn (mut p Parser) is_only_array_type() bool {
+	if p.tok.kind == .lsbr {
+		for i in 1 .. 20 {
+			if p.peek_token(i).kind == .rsbr {
+				next_kind := p.peek_token(i + 1).kind
+				if next_kind == .name {
+					return true
+				} else if next_kind == .lsbr {
+					continue
+				} else {
+					return false
+				}
+			}
+		}
+	}
+	return false
+}
+
 fn (mut p Parser) match_expr() ast.MatchExpr {
 	match_first_pos := p.tok.pos()
 	p.inside_match = true
@@ -199,7 +232,7 @@ fn (mut p Parser) match_expr() ast.MatchExpr {
 		} else if (p.tok.kind == .name && !(p.tok.lit == 'C' && p.peek_tok.kind == .dot)
 			&& (((ast.builtin_type_names_matcher.find(p.tok.lit) > 0 || p.tok.lit[0].is_capital())
 			&& p.peek_tok.kind != .lpar) || (p.peek_tok.kind == .dot && p.peek_token(2).lit.len > 0
-			&& p.peek_token(2).lit[0].is_capital()))) || p.tok.kind == .lsbr {
+			&& p.peek_token(2).lit[0].is_capital()))) || p.is_only_array_type() {
 			mut types := []ast.Type{}
 			for {
 				// Sum type match

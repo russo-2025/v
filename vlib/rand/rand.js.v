@@ -1,16 +1,14 @@
 module rand
 
-import time
-
 // init initializes the default RNG.
 fn init() {
 	default_rng = new_default()
 }
 
-pub fn string(len int) string {
+fn internal_string_from_set(mut rng PRNG, charset string, len int) string {
 	result := ''
 	#
-	#const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+	#const characters = charset.str;
 	#const charactersLength = characters.length;
 	#for (let i = 0;i < len.val;i++)
 	#result.str += characters.charAt(Math.random() * charactersLength);
@@ -22,19 +20,8 @@ const (
 	ulid_encoding = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 )
 
-// ulid generates an Unique Lexicographically sortable IDentifier.
-// See https://github.com/ulid/spec .
-// NB: ULIDs can leak timing information, if you make them public, because
-// you can infer the rate at which some resource is being created, like
-// users or business transactions.
-// (https://news.ycombinator.com/item?id=14526173)
-pub fn ulid() string {
-	return ulid_at_millisecond(u64(time.utc().unix_time_milli()))
-}
-
-// ulid_at_millisecond does the same as `ulid` but takes a custom Unix millisecond timestamp via `unix_time_milli`.
-pub fn ulid_at_millisecond(unix_time_milli u64) string {
-	mut buf := []byte{cap: 27}
+fn internal_ulid_at_millisecond(mut rng PRNG, unix_time_milli u64) string {
+	mut buf := []u8{cap: 27}
 	mut t := unix_time_milli
 	mut i := 9
 	for i >= 0 {
@@ -43,7 +30,7 @@ pub fn ulid_at_millisecond(unix_time_milli u64) string {
 		i--
 	}
 
-	mut x := default_rng.u64()
+	mut x := rng.u64()
 	i = 10
 	for i < 19 {
 		buf[i] = rand.ulid_encoding[int(x & 0x1f)]
@@ -52,7 +39,7 @@ pub fn ulid_at_millisecond(unix_time_milli u64) string {
 		i++
 	}
 
-	x = default_rng.u64()
+	x = rng.u64()
 	for i < 26 {
 		buf[i] = rand.ulid_encoding[int(x & 0x1f)]
 		x = x >> 5
@@ -66,9 +53,8 @@ pub fn ulid_at_millisecond(unix_time_milli u64) string {
 	return res
 }
 
-// read fills in `buf` a maximum of `buf.len` random bytes
-pub fn read(mut buf []byte) {
+fn read_internal(mut rng PRNG, mut buf []u8) {
 	for i in 0 .. buf.len {
-		buf[i] = byte(default_rng.u32())
+		buf[i] = rng.u8()
 	}
 }

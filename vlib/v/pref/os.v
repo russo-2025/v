@@ -3,6 +3,8 @@
 // that can be found in the LICENSE file.
 module pref
 
+import os
+
 pub enum OS {
 	_auto // Reserved so .macos cannot be misunderstood as auto
 	ios
@@ -17,6 +19,7 @@ pub enum OS {
 	js_browser
 	js_freestanding
 	android
+	termux // like android, but compiling/running natively on the devices
 	solaris
 	serenity
 	vinix
@@ -35,6 +38,7 @@ pub fn os_from_string(os_str string) ?OS {
 		'windows' { return .windows }
 		'ios' { return .ios }
 		'macos' { return .macos }
+		'darwin' { return .macos }
 		'freebsd' { return .freebsd }
 		'openbsd' { return .openbsd }
 		'netbsd' { return .netbsd }
@@ -46,12 +50,15 @@ pub fn os_from_string(os_str string) ?OS {
 		'serenity' { return .serenity }
 		'vinix' { return .vinix }
 		'android' { return .android }
+		'termux' { return .termux }
 		'haiku' { return .haiku }
 		'raw' { return .raw }
 		'nix' { return .linux }
 		'wasm32' { return .wasm32 }
-		'wasm32-wasi' { return .wasm32_wasi }
+		'wasm32-wasi' { return .wasm32_wasi } // TODO: remove these *or* the _ ones
 		'wasm32-emscripten' { return .wasm32_emscripten }
+		'wasm32_wasi' { return .wasm32_wasi }
+		'wasm32_emscripten' { return .wasm32_emscripten }
 		'' { return ._auto }
 		else { return error('bad OS $os_str') }
 	}
@@ -72,6 +79,7 @@ pub fn (o OS) str() string {
 		.js_freestanding { return 'JavaScript' }
 		.js_browser { return 'JavaScript(Browser)' }
 		.android { return 'Android' }
+		.termux { return 'Termux' }
 		.solaris { return 'Solaris' }
 		.serenity { return 'SerenityOS' }
 		.vinix { return 'Vinix' }
@@ -85,6 +93,12 @@ pub fn (o OS) str() string {
 }
 
 pub fn get_host_os() OS {
+	if os.getenv('TERMUX_VERSION') != '' {
+		return .termux
+	}
+	$if android {
+		return .android
+	}
 	$if linux {
 		return .linux
 	}

@@ -33,13 +33,13 @@ fn (req &Request) ssl_do(port int, method Method, host_name string, path string)
 		cert = os.temp_dir() + '/v_cert' + now
 		cert_key = os.temp_dir() + '/v_cert_key' + now
 		if req.verify != '' {
-			os.write_file(verify, req.verify) ?
+			os.write_file(verify, req.verify)?
 		}
 		if req.cert != '' {
-			os.write_file(cert, req.cert) ?
+			os.write_file(cert, req.cert)?
 		}
 		if req.cert_key != '' {
-			os.write_file(cert_key, req.cert_key) ?
+			os.write_file(cert_key, req.cert_key)?
 		}
 	}
 	mut res := 0
@@ -80,7 +80,7 @@ fn (req &Request) ssl_do(port int, method Method, host_name string, path string)
 	res = C.SSL_set_tlsext_host_name(voidptr(ssl), host_name.str)
 	res = C.BIO_do_connect(web)
 	if res != 1 {
-		return error('http: openssl: BIO_do_connect failed, res: $res')
+		return error('http: openssl: BIO_do_connect failed, res: $res (potential network issue?)')
 	}
 	res = C.BIO_do_handshake(web)
 	pcert := C.SSL_get_peer_certificate(voidptr(ssl))
@@ -101,7 +101,7 @@ fn (req &Request) ssl_do(port int, method Method, host_name string, path string)
 	// println(req_headers)
 	C.BIO_puts(web, &char(req_headers.str))
 	mut content := strings.new_builder(100)
-	mut buff := [bufsize]byte{}
+	mut buff := [bufsize]u8{}
 	bp := unsafe { &buff[0] }
 	mut readcounter := 0
 	for {

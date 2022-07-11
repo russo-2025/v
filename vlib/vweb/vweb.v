@@ -27,12 +27,12 @@ pub const (
 
 	http_302          = http.new_response(
 		status: .found
-		text: '302 Found'
+		body: '302 Found'
 		header: headers_close
 	)
 	http_400          = http.new_response(
 		status: .bad_request
-		text: '400 Bad Request'
+		body: '400 Bad Request'
 		header: http.new_header(
 			key: .content_type
 			value: 'text/plain'
@@ -40,7 +40,7 @@ pub const (
 	)
 	http_404          = http.new_response(
 		status: .not_found
-		text: '404 Not Found'
+		body: '404 Not Found'
 		header: http.new_header(
 			key: .content_type
 			value: 'text/plain'
@@ -48,7 +48,7 @@ pub const (
 	)
 	http_500          = http.new_response(
 		status: .internal_server_error
-		text: '500 Internal Server Error'
+		body: '500 Internal Server Error'
 		header: http.new_header(
 			key: .content_type
 			value: 'text/plain'
@@ -157,7 +157,7 @@ pub mut:
 	static_files      map[string]string
 	static_mime_types map[string]string
 	// Map containing query params for the route.
-	// Example: `http://localhost:3000/index?q=vpm&order_by=desc => { 'q': 'vpm', 'order_by': 'desc' }
+	// http://localhost:3000/index?q=vpm&order_by=desc => { 'q': 'vpm', 'order_by': 'desc' }
 	query map[string]string
 	// Multipart-form fields.
 	form map[string]string
@@ -193,14 +193,6 @@ pub fn (ctx Context) init_server() {
 // Probably you can use it for check user session cookie or add header.
 pub fn (ctx Context) before_request() {}
 
-pub struct Cookie {
-	name      string
-	value     string
-	expires   time.Time
-	secure    bool
-	http_only bool
-}
-
 // vweb intern function
 [manualfree]
 pub fn (mut ctx Context) send_response_to_client(mimetype string, res string) bool {
@@ -217,7 +209,7 @@ pub fn (mut ctx Context) send_response_to_client(mimetype string, res string) bo
 
 	mut resp := http.Response{
 		header: header.join(vweb.headers_close)
-		text: res
+		body: res
 	}
 	resp.set_version(.v1_1)
 	resp.set_status(http.status_from_int(ctx.status.int()))
@@ -260,7 +252,7 @@ pub fn (mut ctx Context) file(f_path string) Result {
 		return Result{}
 	}
 	content_type := vweb.mime_types[ext]
-	if content_type == '' {
+	if content_type.len == 0 {
 		eprintln('no MIME type found for extension $ext')
 		ctx.server_error(500)
 	} else {
@@ -311,7 +303,7 @@ pub fn (mut ctx Context) not_found() Result {
 }
 
 // Sets a cookie
-pub fn (mut ctx Context) set_cookie(cookie Cookie) {
+pub fn (mut ctx Context) set_cookie(cookie http.Cookie) {
 	mut cookie_data := []string{}
 	mut secure := if cookie.secure { 'Secure;' } else { '' }
 	secure += if cookie.http_only { ' HttpOnly' } else { ' ' }
@@ -389,11 +381,15 @@ pub struct RunParams {
 }
 
 // run_at - start a new VWeb server, listening only on a specific address `host`, at the specified `port`
-// Example: `vweb.run_at(app, 'localhost', 8099)`
+// Example: vweb.run_at(app, 'localhost', 8099)
 [manualfree]
 pub fn run_at<T>(global_app &T, params RunParams) ? {
+	if params.port <= 0 || params.port > 65535 {
+		return error('invalid port number `$params.port`, it should be between 1 and 65535')
+	}
 	mut l := net.listen_tcp(params.family, '$params.host:$params.port') or {
-		return error('failed to listen $err.code $err')
+		ecode := err.code()
+		return error('failed to listen $ecode $err')
 	}
 
 	// Parsing methods attributes
@@ -459,7 +455,12 @@ fn handle_conn<T>(mut conn net.TcpConn, mut app T, routes map[string]Route) {
 		}
 		return
 	}
-
+	$if trace_request ? {
+		dump(req)
+	}
+	$if trace_request_url ? {
+		dump(req.url)
+	}
 	// URL Parse
 	url := urllib.parse(req.url) or {
 		eprintln('error parsing path: $err')
@@ -615,7 +616,7 @@ fn (mut ctx Context) scan_static_directory(directory_path string, mount_path str
 		for file in files {
 			full_path := os.join_path(directory_path, file)
 			if os.is_dir(full_path) {
-				ctx.scan_static_directory(full_path, mount_path + '/' + file)
+				ctx.scan_static_directory(full_path, mount_path.trim_right('/') + '/' + file)
 			} else if file.contains('.') && !file.starts_with('.') && !file.ends_with('.') {
 				ext := os.file_ext(file)
 				// Rudimentary guard against adding files not in mime_types.
@@ -628,8 +629,14 @@ fn (mut ctx Context) scan_static_directory(directory_path string, mount_path str
 	}
 }
 
-// Handles a directory static
+// handle_static is used to mark a folder (relative to the current working folder)
+// as one that contains only static resources (css files, images etc).
 // If `root` is set the mount path for the dir will be in '/'
+// Usage:
+// ```v
+// os.chdir( os.executable() )?
+// app.handle_static('assets', true)
+// ```
 pub fn (mut ctx Context) handle_static(directory_path string, root bool) bool {
 	if ctx.done || !os.exists(directory_path) {
 		return false
@@ -696,7 +703,10 @@ pub fn not_found() Result {
 }
 
 fn send_string(mut conn net.TcpConn, s string) ? {
-	conn.write(s.bytes()) ?
+	$if trace_response ? {
+		eprintln('> send_string:\n$s\n')
+	}
+	conn.write(s.bytes())?
 }
 
 // Do not delete.

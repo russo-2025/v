@@ -39,8 +39,8 @@ fn C._chsize_s(voidptr, u64) int
 
 // read_bytes returns all bytes read from file in `path`.
 [manualfree]
-pub fn read_bytes(path string) ?[]byte {
-	mut fp := vfopen(path, 'rb') ?
+pub fn read_bytes(path string) ?[]u8 {
+	mut fp := vfopen(path, 'rb')?
 	defer {
 		C.fclose(fp)
 	}
@@ -59,7 +59,7 @@ pub fn read_bytes(path string) ?[]byte {
 		return error('$fsize cast to int results in ${int(fsize)})')
 	}
 	C.rewind(fp)
-	mut res := []byte{len: len}
+	mut res := []u8{len: len}
 	nr_read_elements := int(C.fread(res.data, len, 1, fp))
 	if nr_read_elements == 0 && fsize > 0 {
 		return error('fread failed')
@@ -71,7 +71,7 @@ pub fn read_bytes(path string) ?[]byte {
 // read_file reads the file in `path` and returns the contents.
 pub fn read_file(path string) ?string {
 	mode := 'rb'
-	mut fp := vfopen(path, mode) ?
+	mut fp := vfopen(path, mode)?
 	defer {
 		C.fclose(fp)
 	}
@@ -203,7 +203,7 @@ pub fn mv(src string, dst string) ? {
 	} $else {
 		ret := C.rename(&char(src.str), &char(rdst.str))
 		if ret != 0 {
-			return error_with_code('failed to rename $src to $dst', int(ret))
+			return error_with_code('failed to rename $src to $dst', ret)
 		}
 	}
 }
@@ -230,7 +230,7 @@ pub fn cp(src string, dst string) ? {
 		}
 		// TODO use defer{} to close files in case of error or return.
 		// Currently there is a C-Error when building.
-		mut buf := [1024]byte{}
+		mut buf := [1024]u8{}
 		mut count := 0
 		for {
 			count = C.read(fp_from, &buf[0], sizeof(buf))
@@ -258,7 +258,7 @@ pub fn cp(src string, dst string) ? {
 }
 
 // vfopen returns an opened C file, given its path and open mode.
-// NB: os.vfopen is useful for compatibility with C libraries, that expect `FILE *`.
+// Note: os.vfopen is useful for compatibility with C libraries, that expect `FILE *`.
 // If you write pure V code, os.create or os.open are more convenient.
 pub fn vfopen(path string, mode string) ?&C.FILE {
 	if path.len == 0 {
@@ -356,7 +356,7 @@ pub fn system(cmd string) int {
 	} $else {
 		$if ios {
 			unsafe {
-				arg := [c'/bin/sh', c'-c', &byte(cmd.str), 0]
+				arg := [c'/bin/sh', c'-c', &u8(cmd.str), 0]
 				pid := 0
 				ret = C.posix_spawn(&pid, c'/bin/sh', 0, 0, arg.data, 0)
 				status := 0
@@ -397,14 +397,14 @@ pub fn exists(path string) bool {
 // is_executable returns `true` if `path` is executable.
 pub fn is_executable(path string) bool {
 	$if windows {
-		// NB: https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/access-waccess?view=vs-2019
+		// Note: https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/access-waccess?view=vs-2019
 		// i.e. there is no X bit there, the modes can be:
 		// 00 Existence only
 		// 02 Write-only
 		// 04 Read-only
 		// 06 Read and write
 		p := real_path(path)
-		return exists(p) && p.ends_with('.exe')
+		return exists(p) && (p.ends_with('.exe') || p.ends_with('.bat') || p.ends_with('.cmd'))
 	}
 	$if solaris {
 		statbuf := C.stat{}
@@ -481,7 +481,7 @@ pub fn rmdir(path string) ? {
 // print_c_errno will print the current value of `C.errno`.
 fn print_c_errno() {
 	e := C.errno
-	se := unsafe { tos_clone(&byte(C.strerror(e))) }
+	se := unsafe { tos_clone(&u8(C.strerror(e))) }
 	println('errno=$e err=$se')
 }
 
@@ -522,12 +522,12 @@ pub fn get_raw_line() string {
 		max := usize(0)
 		buf := &char(0)
 		nr_chars := unsafe { C.getline(&buf, &max, C.stdin) }
-		return unsafe { tos(&byte(buf), if nr_chars < 0 { 0 } else { nr_chars }) }
+		return unsafe { tos(&u8(buf), if nr_chars < 0 { 0 } else { nr_chars }) }
 	}
 }
 
 // get_raw_stdin will get the raw input from stdin.
-pub fn get_raw_stdin() []byte {
+pub fn get_raw_stdin() []u8 {
 	$if windows {
 		unsafe {
 			block_bytes := 512
@@ -781,7 +781,7 @@ pub fn getwd() string {
 // See http://pubs.opengroup.org/onlinepubs/9699919799/functions/realpath.html
 // Also https://insanecoding.blogspot.com/2007/11/pathmax-simply-isnt.html
 // and https://insanecoding.blogspot.com/2007/11/implementing-realpath-in-c.html
-// NB: this particular rabbit hole is *deep* ...
+// Note: this particular rabbit hole is *deep* ...
 [manualfree]
 pub fn real_path(fpath string) string {
 	size := max_path_bufffer_size()
@@ -833,7 +833,7 @@ pub fn real_path(fpath string) string {
 			unsafe { res.free() }
 			return fpath.clone()
 		}
-		// NB: fullpath is much larger (usually ~4KB), than what C.realpath will
+		// Note: fullpath is much larger (usually ~4KB), than what C.realpath will
 		// actually fill in the vast majority of the cases => it pays to copy the
 		// resulting string from that buffer, to a shorter one, and then free the
 		// 4KB fullpath buffer.
@@ -946,7 +946,7 @@ pub fn open_append(path string) ?File {
 // execvp - loads and executes a new child process, *in place* of the current process.
 // The child process executable is located in `cmdpath`.
 // The arguments, that will be passed to it are in `args`.
-// NB: this function will NOT return when successfull, since
+// Note: this function will NOT return when successfull, since
 // the child process will take control over execution.
 pub fn execvp(cmdpath string, cmdargs []string) ? {
 	mut cargs := []&char{}
@@ -964,6 +964,7 @@ pub fn execvp(cmdpath string, cmdargs []string) ? {
 	if res == -1 {
 		return error_with_code(posix_get_error_msg(C.errno), C.errno)
 	}
+
 	// just in case C._execvp returned ... that happens on windows ...
 	exit(res)
 }
@@ -972,7 +973,7 @@ pub fn execvp(cmdpath string, cmdargs []string) ? {
 // The child process executable is located in `cmdpath`.
 // The arguments, that will be passed to it are in `args`.
 // You can pass environment variables to through `envs`.
-// NB: this function will NOT return when successfull, since
+// Note: this function will NOT return when successfull, since
 // the child process will take control over execution.
 pub fn execve(cmdpath string, cmdargs []string, envs []string) ? {
 	mut cargv := []&char{}
@@ -992,7 +993,7 @@ pub fn execve(cmdpath string, cmdargs []string, envs []string) ? {
 	} $else {
 		res = C.execve(&char(cmdpath.str), cargv.data, cenvs.data)
 	}
-	// NB: normally execve does not return at all.
+	// Note: normally execve does not return at all.
 	// If it returns, then something went wrong...
 	if res == -1 {
 		return error_with_code(posix_get_error_msg(C.errno), C.errno)
@@ -1013,15 +1014,15 @@ pub fn is_atty(fd int) int {
 
 // write_file_array writes the data in `buffer` to a file in `path`.
 pub fn write_file_array(path string, buffer array) ? {
-	mut f := create(path) ?
-	unsafe { f.write_full_buffer(buffer.data, usize(buffer.len * buffer.element_size)) ? }
+	mut f := create(path)?
+	unsafe { f.write_full_buffer(buffer.data, usize(buffer.len * buffer.element_size))? }
 	f.close()
 }
 
 pub fn glob(patterns ...string) ?[]string {
 	mut matches := []string{}
 	for pattern in patterns {
-		native_glob_pattern(pattern, mut matches) ?
+		native_glob_pattern(pattern, mut matches)?
 	}
 	matches.sort()
 	return matches

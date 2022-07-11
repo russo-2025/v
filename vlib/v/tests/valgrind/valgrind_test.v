@@ -10,7 +10,7 @@ fn bold(s string) string {
 }
 
 //
-// NB: skip_compile_files can be used for totally skipping .v files temporarily.
+// Note: skip_compile_files can be used for totally skipping .v files temporarily.
 // .v files in skip_valgrind_files will be compiled, but will not be run under
 // valgrind. This ensures that at least the generated code does not have C syntax
 // errors.
@@ -63,7 +63,8 @@ fn test_all() {
 	vroot := os.dir(vexe)
 	valgrind_test_path := 'vlib/v/tests/valgrind'
 	dir := os.join_path(vroot, valgrind_test_path)
-	files := os.ls(dir) or { panic(err) }
+	mut files := os.ls(dir) or { panic(err) }
+	files.sort()
 	//
 	wrkdir := os.join_path(os.temp_dir(), 'vtests', 'valgrind')
 	os.mkdir_all(wrkdir) or { panic(err) }
@@ -85,7 +86,7 @@ fn test_all() {
 		base_filename := os.file_name(test).replace('.v', '')
 		exe_filename := '$wrkdir/$base_filename'
 		full_path_to_source_file := os.join_path(vroot, test)
-		compile_cmd := '${os.quoted_path(vexe)} -o ${os.quoted_path(exe_filename)} -cg -cflags "-w" -experimental -autofree ${os.quoted_path(full_path_to_source_file)}'
+		compile_cmd := '${os.quoted_path(vexe)} -o ${os.quoted_path(exe_filename)} -cg -cflags "-w" -experimental -gc none -autofree ${os.quoted_path(full_path_to_source_file)}'
 		vprintln('compile cmd: ${bold(compile_cmd)}')
 		res := os.execute(compile_cmd)
 		if res.exit_code != 0 {

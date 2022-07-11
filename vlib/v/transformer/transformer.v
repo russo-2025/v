@@ -8,7 +8,7 @@ pub struct Transformer {
 	pref &pref.Preferences
 pub mut:
 	index &IndexState
-	table &ast.Table = 0
+	table &ast.Table = unsafe { 0 }
 mut:
 	is_assert bool
 }
@@ -401,7 +401,7 @@ pub fn (mut t Transformer) expr_stmt_match_expr(mut node ast.MatchExpr) ast.Expr
 		for mut expr in branch.exprs {
 			expr = t.expr(mut expr)
 
-			match mut cond {
+			match cond {
 				ast.BoolLiteral {
 					if expr is ast.BoolLiteral {
 						if cond.val == (expr as ast.BoolLiteral).val {
@@ -636,6 +636,14 @@ pub fn (mut t Transformer) expr(mut node ast.Expr) ast.Expr {
 		}
 		ast.SelectorExpr {
 			node.expr = t.expr(mut node.expr)
+			if mut node.expr is ast.StringLiteral && node.field_name == 'len' {
+				if !node.expr.val.contains('\\') || node.expr.is_raw {
+					return ast.IntegerLiteral{
+						val: node.expr.val.len.str()
+						pos: node.pos
+					}
+				}
+			}
 		}
 		ast.SizeOf {
 			node.expr = t.expr(mut node.expr)
@@ -935,8 +943,8 @@ pub fn (mut t Transformer) if_expr(mut node ast.IfExpr) ast.Expr {
 			stmt = t.stmt(mut stmt)
 
 			if i == branch.stmts.len - 1 {
-				if stmt is ast.ExprStmt {
-					expr := (stmt as ast.ExprStmt).expr
+				if mut stmt is ast.ExprStmt {
+					expr := stmt.expr
 
 					match expr {
 						ast.IfExpr {
@@ -976,8 +984,8 @@ pub fn (mut t Transformer) match_expr(mut node ast.MatchExpr) ast.Expr {
 			stmt = t.stmt(mut stmt)
 
 			if i == branch.stmts.len - 1 {
-				if stmt is ast.ExprStmt {
-					expr := (stmt as ast.ExprStmt).expr
+				if mut stmt is ast.ExprStmt {
+					expr := stmt.expr
 
 					match expr {
 						ast.IfExpr {

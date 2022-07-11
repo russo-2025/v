@@ -4,7 +4,7 @@ import os
 import testing
 import v.util
 
-// NB: tools like vdoc are compiled in their own subfolder
+// Note: tools like vdoc are compiled in their own subfolder
 // => cmd/tools/vdoc/vdoc.exe
 // Usually, they have several top level .v files in the subfolder,
 // that cannot be compiled separately, but instead, the whole folder,
@@ -23,7 +23,7 @@ fn main() {
 	args_string := os.args[1..].join(' ')
 	vexe := os.getenv('VEXE')
 	vroot := os.dir(vexe)
-	os.chdir(vroot) ?
+	os.chdir(vroot)?
 	folder := os.join_path('cmd', 'tools')
 	tfolder := os.join_path(vroot, 'cmd', 'tools')
 	main_label := 'Building $folder ...'
@@ -31,7 +31,7 @@ fn main() {
 	//
 	mut skips := []string{}
 	for stool in tools_in_subfolders {
-		skips << os.join_path(tfolder, stool)
+		skips << os.join_path(tfolder, stool).replace('\\', '/')
 	}
 	buildopts := args_string.all_before('build-tools')
 	mut session := testing.prepare_test_session(buildopts, folder, skips, main_label)
@@ -43,11 +43,11 @@ fn main() {
 	// eprintln('> session.skip_files: $session.skip_files')
 	session.test()
 	eprintln(session.benchmark.total_message(finish_label))
-	if session.failed {
+	if session.failed_cmds.len > 0 {
 		exit(1)
 	}
 	//
-	mut executables := os.ls(session.vtmp_dir) ?
+	mut executables := os.ls(session.vtmp_dir)?
 	executables.sort()
 	for texe in executables {
 		tname := texe.replace(os.file_ext(texe), '')
@@ -66,8 +66,9 @@ fn main() {
 		}
 		target_path := os.join_path(tfolder, texe)
 		os.mv_by_cp(tpath, target_path) or {
-			if !err.msg.contains('vbuild-tools') && !err.msg.contains('vtest-all') {
-				eprintln('error while moving $tpath to $target_path: $err.msg')
+			emsg := err.msg()
+			if !emsg.contains('vbuild-tools') && !emsg.contains('vtest-all') {
+				eprintln('error while moving $tpath to $target_path: $emsg')
 			}
 			continue
 		}

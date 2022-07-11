@@ -7,6 +7,9 @@ import v.pref
 
 // TODO: non deferred
 pub fn (mut c Checker) return_stmt(mut node ast.Return) {
+	if isnil(c.table.cur_fn) {
+		return
+	}
 	c.expected_type = c.table.cur_fn.return_type
 	mut expected_type := c.unwrap_generic(c.expected_type)
 	expected_type_sym := c.table.sym(expected_type)
@@ -24,6 +27,7 @@ pub fn (mut c Checker) return_stmt(mut node ast.Return) {
 		return
 	}
 	exp_is_optional := expected_type.has_flag(.optional)
+	exp_is_result := expected_type.has_flag(.result)
 	mut expected_types := [expected_type]
 	if expected_type_sym.info is ast.MultiReturn {
 		expected_types = expected_type_sym.info.types
@@ -32,8 +36,9 @@ pub fn (mut c Checker) return_stmt(mut node ast.Return) {
 		}
 	}
 	mut got_types := []ast.Type{}
-	for expr in node.exprs {
-		typ := c.expr(expr)
+	mut expr_idxs := []int{}
+	for i, expr in node.exprs {
+		mut typ := c.expr(expr)
 		if typ == ast.void_type {
 			c.error('`$expr` used as value', node.pos)
 		}
@@ -42,9 +47,18 @@ pub fn (mut c Checker) return_stmt(mut node ast.Return) {
 		if sym.kind == .multi_return {
 			for t in sym.mr_info().types {
 				got_types << t
+				expr_idxs << i
 			}
 		} else {
+			if expr is ast.Ident {
+				if expr.obj is ast.Var {
+					if expr.obj.smartcasts.len > 0 {
+						typ = c.unwrap_generic(expr.obj.smartcasts.last())
+					}
+				}
+			}
 			got_types << typ
+			expr_idxs << i
 		}
 	}
 	node.types = got_types
@@ -63,10 +77,12 @@ pub fn (mut c Checker) return_stmt(mut node ast.Return) {
 		}
 	}
 	// allow `none` & `error` return types for function that returns optional
-	option_type_idx := c.table.type_idxs['Option']
+	option_type_idx := c.table.type_idxs['_option']
+	result_type_idx := c.table.type_idxs['_result']
 	got_types_0_idx := got_types[0].idx()
-	if exp_is_optional
-		&& got_types_0_idx in [ast.none_type_idx, ast.error_type_idx, option_type_idx] {
+	if (exp_is_optional
+		&& got_types_0_idx in [ast.none_type_idx, ast.error_type_idx, option_type_idx])
+		|| (exp_is_result && got_types_0_idx in [ast.error_type_idx, result_type_idx]) {
 		if got_types_0_idx == ast.none_type_idx && expected_type == ast.ovoid_type {
 			c.error('returning `none` in functions, that have a `?` result type is not allowed anymore, either `return error(message)` or just `return` instead',
 				node.pos)
@@ -75,37 +91,39 @@ pub fn (mut c Checker) return_stmt(mut node ast.Return) {
 	}
 	if expected_types.len > 0 && expected_types.len != got_types.len {
 		arg := if expected_types.len == 1 { 'argument' } else { 'arguments' }
-		c.error('expected $expected_types.len $arg, but got $got_types.len', node.pos)
+		midx := imax(0, imin(expected_types.len, expr_idxs.len - 1))
+		mismatch_pos := node.exprs[expr_idxs[midx]].pos()
+		c.error('expected $expected_types.len $arg, but got $got_types.len', mismatch_pos)
 		return
 	}
 	for i, exp_type in expected_types {
 		got_typ := c.unwrap_generic(got_types[i])
 		if got_typ.has_flag(.optional) && (!exp_type.has_flag(.optional)
 			|| c.table.type_to_str(got_typ) != c.table.type_to_str(exp_type)) {
-			pos := node.exprs[i].pos()
+			pos := node.exprs[expr_idxs[i]].pos()
 			c.error('cannot use `${c.table.type_to_str(got_typ)}` as type `${c.table.type_to_str(exp_type)}` in return argument',
 				pos)
 		}
-		if !c.check_types(got_typ, exp_type) {
+		if node.exprs[expr_idxs[i]] !is ast.ComptimeCall && !c.check_types(got_typ, exp_type) {
 			got_typ_sym := c.table.sym(got_typ)
 			mut exp_typ_sym := c.table.sym(exp_type)
 			if exp_typ_sym.kind == .interface_ {
 				if c.type_implements(got_typ, exp_type, node.pos) {
 					if !got_typ.is_ptr() && !got_typ.is_pointer() && got_typ_sym.kind != .interface_
 						&& !c.inside_unsafe {
-						c.mark_as_referenced(mut &node.exprs[i], true)
+						c.mark_as_referenced(mut &node.exprs[expr_idxs[i]], true)
 					}
 				}
 				continue
 			}
-			pos := node.exprs[i].pos()
+			pos := node.exprs[expr_idxs[i]].pos()
 			c.error('cannot use `$got_typ_sym.name` as type `${c.table.type_to_str(exp_type)}` in return argument',
 				pos)
 		}
 		if (got_typ.is_ptr() || got_typ.is_pointer())
 			&& (!exp_type.is_ptr() && !exp_type.is_pointer()) {
-			pos := node.exprs[i].pos()
-			if node.exprs[i].is_auto_deref_var() {
+			pos := node.exprs[expr_idxs[i]].pos()
+			if node.exprs[expr_idxs[i]].is_auto_deref_var() {
 				continue
 			}
 			c.error('fn `$c.table.cur_fn.name` expects you to return a non reference type `${c.table.type_to_str(exp_type)}`, but you are returning `${c.table.type_to_str(got_typ)}` instead',
@@ -114,15 +132,15 @@ pub fn (mut c Checker) return_stmt(mut node ast.Return) {
 		if (exp_type.is_ptr() || exp_type.is_pointer())
 			&& (!got_typ.is_ptr() && !got_typ.is_pointer()) && got_typ != ast.int_literal_type
 			&& !c.pref.translated && !c.file.is_translated {
-			pos := node.exprs[i].pos()
-			if node.exprs[i].is_auto_deref_var() {
+			pos := node.exprs[expr_idxs[i]].pos()
+			if node.exprs[expr_idxs[i]].is_auto_deref_var() {
 				continue
 			}
 			c.error('fn `$c.table.cur_fn.name` expects you to return a reference type `${c.table.type_to_str(exp_type)}`, but you are returning `${c.table.type_to_str(got_typ)}` instead',
 				pos)
 		}
 		if exp_type.is_ptr() && got_typ.is_ptr() {
-			mut r_expr := &node.exprs[i]
+			mut r_expr := &node.exprs[expr_idxs[i]]
 			if mut r_expr is ast.Ident {
 				if mut r_expr.obj is ast.Var {
 					mut obj := unsafe { &r_expr.obj }
@@ -148,7 +166,7 @@ pub fn (mut c Checker) return_stmt(mut node ast.Return) {
 	if exp_is_optional && node.exprs.len > 0 {
 		expr0 := node.exprs[0]
 		if expr0 is ast.CallExpr {
-			if expr0.or_block.kind == .propagate {
+			if expr0.or_block.kind == .propagate_option && node.exprs.len == 1 {
 				c.error('`?` is not needed, use `return ${expr0.name}()`', expr0.pos)
 			}
 		}
@@ -158,24 +176,21 @@ pub fn (mut c Checker) return_stmt(mut node ast.Return) {
 pub fn (mut c Checker) find_unreachable_statements_after_noreturn_calls(stmts []ast.Stmt) {
 	mut prev_stmt_was_noreturn_call := false
 	for stmt in stmts {
-		match stmt {
-			ast.ExprStmt {
-				if stmt.expr is ast.CallExpr {
-					if prev_stmt_was_noreturn_call {
-						c.error('unreachable code after a [noreturn] call', stmt.pos)
-						return
-					}
-					prev_stmt_was_noreturn_call = stmt.expr.is_noreturn
+		if stmt is ast.ExprStmt {
+			if stmt.expr is ast.CallExpr {
+				if prev_stmt_was_noreturn_call {
+					c.error('unreachable code after a [noreturn] call', stmt.pos)
+					return
 				}
+				prev_stmt_was_noreturn_call = stmt.expr.is_noreturn
 			}
-			else {
-				prev_stmt_was_noreturn_call = false
-			}
+		} else {
+			prev_stmt_was_noreturn_call = false
 		}
 	}
 }
 
-// NB: has_top_return/1 should be called on *already checked* stmts,
+// Note: has_top_return/1 should be called on *already checked* stmts,
 // which do have their stmt.expr.is_noreturn set properly:
 fn has_top_return(stmts []ast.Stmt) bool {
 	for stmt in stmts {
@@ -316,4 +331,12 @@ fn is_noreturn_callexpr(expr ast.Expr) bool {
 		return expr.is_noreturn
 	}
 	return false
+}
+
+fn imin(a int, b int) int {
+	return if a < b { a } else { b }
+}
+
+fn imax(a int, b int) int {
+	return if a < b { b } else { a }
 }

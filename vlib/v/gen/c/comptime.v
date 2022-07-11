@@ -20,7 +20,12 @@ fn (mut g Gen) comptime_selector(node ast.ComptimeSelector) {
 		if node.field_expr.expr is ast.Ident {
 			if node.field_expr.expr.name == g.comptime_for_field_var
 				&& node.field_expr.field_name == 'name' {
-				g.write(c_name(g.comptime_for_field_value.name))
+				field_name := g.comptime_for_field_value.name
+				left_sym := g.table.sym(g.unwrap_generic(node.left_type))
+				_ := g.table.find_field_with_embeds(left_sym, field_name) or {
+					g.error('`$node.left` has no field named `$field_name`', node.left.pos())
+				}
+				g.write(c_name(field_name))
 				return
 			}
 		}
@@ -117,9 +122,8 @@ fn (mut g Gen) comptime_call(mut node ast.ComptimeCall) {
 
 		// try to see if we need to pass a pointer
 		if node.left is ast.Ident {
-			scope := g.file.scope.innermost(node.pos.pos)
-			if v := scope.find_var(node.left.name) {
-				if m.params[0].typ.is_ptr() && !v.typ.is_ptr() {
+			if node.left.obj is ast.Var {
+				if m.params[0].typ.is_ptr() && !node.left.obj.typ.is_ptr() {
 					g.write('&')
 				}
 			}
@@ -155,11 +159,7 @@ fn (mut g Gen) comptime_call(mut node ast.ComptimeCall) {
 				}
 			}
 		}
-		if g.inside_call {
-			g.write(')')
-		} else {
-			g.write(');')
-		}
+		g.write(')')
 		return
 	}
 	mut j := 0
@@ -204,7 +204,7 @@ fn cgen_attrs(attrs []ast.Attr) []string {
 
 fn (mut g Gen) comptime_at(node ast.AtExpr) {
 	if node.kind == .vmod_file {
-		val := cnewlines(node.val.replace('\r', ''))
+		val := cescape_nonascii(util.smart_quote(node.val, false))
 		g.write('_SLIT("$val")')
 	} else {
 		val := node.val.replace('\\', '\\\\')
@@ -264,14 +264,14 @@ fn (mut g Gen) comptime_if(node ast.IfExpr) {
 		if node.is_expr {
 			len := branch.stmts.len
 			if len > 0 {
-				last := branch.stmts[len - 1] as ast.ExprStmt
+				last := branch.stmts.last() as ast.ExprStmt
 				if len > 1 {
 					tmp := g.new_tmp_var()
 					styp := g.typ(last.typ)
 					g.indent++
 					g.writeln('$styp $tmp;')
 					g.writeln('{')
-					g.stmts(branch.stmts[0..len - 1])
+					g.stmts(branch.stmts[..len - 1])
 					g.write('\t$tmp = ')
 					g.stmt(last)
 					g.writeln('}')
@@ -284,7 +284,7 @@ fn (mut g Gen) comptime_if(node ast.IfExpr) {
 			}
 		} else {
 			// Only wrap the contents in {} if we're inside a function, not on the top level scope
-			should_create_scope := g.fn_decl != 0
+			should_create_scope := unsafe { g.fn_decl != 0 }
 			if should_create_scope {
 				g.writeln('{')
 			}
@@ -403,10 +403,10 @@ fn (mut g Gen) comptime_if_cond(cond ast.Expr, pkg_exist bool) bool {
 					}
 
 					if cond.op == .key_is {
-						g.write('$exp_type == $got_type')
+						g.write('$exp_type.idx() == $got_type.idx()')
 						return exp_type == got_type
 					} else {
-						g.write('$exp_type != $got_type')
+						g.write('$exp_type.idx() != $got_type.idx()')
 						return exp_type != got_type
 					}
 				}
@@ -545,7 +545,7 @@ fn (mut g Gen) comptime_for(node ast.ComptimeFor) {
 				// field_sym := g.table.sym(field.typ)
 				// g.writeln('\t${node.val_var}.typ = _SLIT("$field_sym.name");')
 				styp := field.typ
-				g.writeln('\t${node.val_var}.typ = $styp;')
+				g.writeln('\t${node.val_var}.typ = $styp.idx();')
 				g.writeln('\t${node.val_var}.is_pub = $field.is_pub;')
 				g.writeln('\t${node.val_var}.is_mut = $field.is_mut;')
 				g.writeln('\t${node.val_var}.is_shared = ${field.typ.has_flag(.shared_f)};')
@@ -632,6 +632,10 @@ fn (mut g Gen) comptime_if_to_ifdef(name string, is_comptime_optional bool) ?str
 		'android' {
 			return '__ANDROID__'
 		}
+		'termux' {
+			// Note: termux is running on Android natively so __ANDROID__ will also be defined
+			return '__TERMUX__'
+		}
 		'solaris' {
 			return '__sun'
 		}
@@ -698,6 +702,12 @@ fn (mut g Gen) comptime_if_to_ifdef(name string, is_comptime_optional bool) ?str
 		}
 		'aarch64', 'arm64' {
 			return '__V_arm64'
+		}
+		'arm32' {
+			return '__V_arm32'
+		}
+		'i386' {
+			return '__V_x86'
 		}
 		// bitness:
 		'x64' {

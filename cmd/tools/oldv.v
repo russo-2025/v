@@ -57,7 +57,7 @@ fn (mut c Context) compile_oldv_if_needed() {
 	c.vgcontext.compile_oldv_if_needed()
 	c.commit_v_hash = c.vgcontext.commit_v__hash
 	if !os.exists(c.vgcontext.vexepath) && c.cmd_to_run.len > 0 {
-		// NB: 125 is a special code, that git bisect understands as 'skip this commit'.
+		// Note: 125 is a special code, that git bisect understands as 'skip this commit'.
 		// it is used to inform git bisect that the current commit leads to a build failure.
 		exit(125)
 	}
@@ -125,7 +125,7 @@ fn main() {
 	should_sync := fp.bool('cache-sync', `s`, false, 'Update the local cache')
 	context.is_bisect = fp.bool('bisect', `b`, false, 'Bisect mode. Use the current commit in the repo where oldv is.')
 	if !should_sync && !context.is_bisect {
-		fp.limit_free_args(1, 1) ?
+		fp.limit_free_args(1, 1)?
 	}
 	////
 	context.cleanup = fp.bool('clean', 0, false, 'Clean before running (slower).')

@@ -9,6 +9,22 @@ pub fn (mut c Checker) array_init(mut node ast.ArrayInit) ast.Type {
 	mut elem_type := ast.void_type
 	// []string - was set in parser
 	if node.typ != ast.void_type {
+		if node.elem_type != 0 {
+			elem_sym := c.table.sym(node.elem_type)
+			if elem_sym.kind == .struct_ {
+				elem_info := elem_sym.info as ast.Struct
+				if elem_info.generic_types.len > 0 && elem_info.concrete_types.len == 0
+					&& !node.elem_type.has_flag(.generic) {
+					if c.table.cur_concrete_types.len == 0 {
+						c.error('generic struct must specify type parameter, e.g. Foo<int>',
+							node.elem_type_pos)
+					} else {
+						c.error('generic struct must specify type parameter, e.g. Foo<T>',
+							node.elem_type_pos)
+					}
+				}
+			}
+		}
 		if node.exprs.len == 0 {
 			if node.has_cap {
 				c.check_array_init_para_type('cap', node.cap_expr, node.pos)
@@ -36,8 +52,15 @@ pub fn (mut c Checker) array_init(mut node ast.ArrayInit) ast.Type {
 			c.ensure_sumtype_array_has_default_value(node)
 		}
 		c.ensure_type_exists(node.elem_type, node.elem_type_pos) or {}
-		if node.typ.has_flag(.generic) && c.table.cur_fn.generic_names.len == 0 {
+		if node.typ.has_flag(.generic) && !isnil(c.table.cur_fn)
+			&& c.table.cur_fn.generic_names.len == 0 {
 			c.error('generic struct cannot use in non-generic function', node.pos)
+		}
+
+		// &int{} check
+		if node.elem_type.is_any_kind_of_pointer() && !c.inside_unsafe && node.has_len {
+			c.warn('arrays of references need to be initialized right away, therefore `len:` cannot be used (unless inside `unsafe`)',
+				node.pos)
 		}
 		return node.typ
 	}
@@ -64,8 +87,12 @@ pub fn (mut c Checker) array_init(mut node ast.ArrayInit) ast.Type {
 		// }
 		array_info := type_sym.array_info()
 		node.elem_type = array_info.elem_type
-		// clear optional flag incase of: `fn opt_arr ?[]int { return [] }`
-		return c.expected_type.clear_flag(.optional)
+		// clear optional flag incase of: `fn opt_arr() ?[]int { return [] }`
+		return if c.expected_type.has_flag(.shared_f) {
+			c.expected_type.clear_flag(.shared_f).deref()
+		} else {
+			c.expected_type
+		}.clear_flag(.optional)
 	}
 	// [1,2,3]
 	if node.exprs.len > 0 && node.elem_type == ast.void_type {
@@ -110,8 +137,7 @@ pub fn (mut c Checker) array_init(mut node ast.ArrayInit) ast.Type {
 				continue
 			} else if expecting_sumtype_array {
 				if i == 0 {
-					if expected_value_type.idx() == typ.idx()
-						|| c.table.sumtype_has_variant(expected_value_type, typ, false) {
+					if c.table.is_sumtype_or_in_variant(expected_value_type, typ) {
 						elem_type = expected_value_type
 					} else {
 						if expr.is_auto_deref_var() {
@@ -135,6 +161,11 @@ pub fn (mut c Checker) array_init(mut node ast.ArrayInit) ast.Type {
 				continue
 			}
 			if expr !is ast.TypeNode {
+				if c.table.type_kind(elem_type) == .interface_ {
+					if c.type_implements(typ, elem_type, expr.pos()) {
+						continue
+					}
+				}
 				c.check_expected(typ, elem_type) or {
 					c.error('invalid array element: $err.msg()', expr.pos())
 				}
@@ -157,7 +188,7 @@ pub fn (mut c Checker) array_init(mut node ast.ArrayInit) ast.Type {
 		}
 		node.elem_type = elem_type
 	} else if node.is_fixed && node.exprs.len == 1 && node.elem_type != ast.void_type {
-		// [50]byte
+		// [50]u8
 		mut fixed_size := i64(0)
 		init_expr := node.exprs[0]
 		c.expr(init_expr)
@@ -203,7 +234,7 @@ pub fn (mut c Checker) array_init(mut node ast.ArrayInit) ast.Type {
 }
 
 fn (mut c Checker) check_array_init_para_type(para string, expr ast.Expr, pos token.Pos) {
-	sym := c.table.sym(c.expr(expr))
+	sym := c.table.sym(c.unwrap_generic(c.expr(expr)))
 	if sym.kind !in [.int, .int_literal] {
 		c.error('array $para needs to be an int', pos)
 	}
@@ -240,6 +271,22 @@ pub fn (mut c Checker) map_init(mut node ast.MapInit) ast.Type {
 	// `x := map[string]string` - set in parser
 	if node.typ != 0 {
 		info := c.table.sym(node.typ).map_info()
+		if info.value_type != 0 {
+			val_sym := c.table.sym(info.value_type)
+			if val_sym.kind == .struct_ {
+				val_info := val_sym.info as ast.Struct
+				if val_info.generic_types.len > 0 && val_info.concrete_types.len == 0
+					&& !info.value_type.has_flag(.generic) {
+					if c.table.cur_concrete_types.len == 0 {
+						c.error('generic struct `$val_sym.name` must specify type parameter, e.g. Foo<int>',
+							node.pos)
+					} else {
+						c.error('generic struct `$val_sym.name` must specify type parameter, e.g. Foo<T>',
+							node.pos)
+					}
+				}
+			}
+		}
 		c.ensure_type_exists(info.key_type, node.pos) or {}
 		c.ensure_type_exists(info.value_type, node.pos) or {}
 		node.key_type = info.key_type

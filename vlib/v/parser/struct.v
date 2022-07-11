@@ -6,8 +6,9 @@ module parser
 import v.ast
 import v.token
 import v.util
+import os
 
-fn (mut p Parser) struct_decl() ast.StructDecl {
+fn (mut p Parser) struct_decl(is_anon bool) ast.StructDecl {
 	p.top_level_statement_start()
 	// save attributes, they will be changed later in fields
 	attrs := p.attrs
@@ -36,12 +37,15 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 	}
 	name_pos := p.tok.pos()
 	p.check_for_impure_v(language, name_pos)
-	mut name := p.check_name()
-	// defer {
-	// if name.contains('App') {
-	// println('end of struct decl $name')
-	// }
-	// }
+	if p.disallow_declarations_in_script_mode() {
+		return ast.StructDecl{}
+	}
+	mut name := if is_anon {
+		p.anon_struct_counter++
+		'_VAnonStruct$p.anon_struct_counter'
+	} else {
+		p.check_name()
+	}
 	if name.len == 1 && name[0].is_capital() {
 		p.error_with_pos('single letter capital names are reserved for generic template types.',
 			name_pos)
@@ -51,6 +55,11 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 		p.error_with_pos('cannot register struct `IError`, it is builtin interface type',
 			name_pos)
 	}
+	// append module name before any type of parsing to enable recursion parsing
+	p.table.start_parsing_type(p.prepend_mod(name))
+	defer {
+		p.table.reset_parsing_type()
+	}
 	generic_types, _ := p.parse_generic_types()
 	no_body := p.tok.kind != .lcbr
 	if language == .v && no_body {
@@ -58,7 +67,7 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 		return ast.StructDecl{}
 	}
 	if language == .v && !p.builtin_mod && !p.is_translated && name.len > 0 && !name[0].is_capital()
-		&& !p.pref.translated && !p.is_translated {
+		&& !p.pref.translated && !p.is_translated && !is_anon {
 		p.error_with_pos('struct name `$name` must begin with capital letter', name_pos)
 		return ast.StructDecl{}
 	}
@@ -98,6 +107,7 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 	mut end_comments := []ast.Comment{}
 	if !no_body {
 		p.check(.lcbr)
+		mut i := 0
 		for p.tok.kind != .rcbr {
 			mut comments := []ast.Comment{}
 			for p.tok.kind == .comment {
@@ -175,17 +185,21 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 			}
 			field_start_pos := p.tok.pos()
 			mut is_field_volatile := false
+			mut is_field_deprecated := false
 			if p.tok.kind == .key_volatile {
 				p.next()
 				is_field_volatile = true
 			}
-			is_embed := ((p.tok.lit.len > 1 && p.tok.lit[0].is_capital())
+			is_embed := ((p.tok.lit.len > 1 && p.tok.lit[0].is_capital()
+				&& (p.peek_tok.line_nr != p.tok.line_nr || p.peek_tok.kind !in [.name, .amp])
+				&& (p.peek_tok.kind != .lsbr || p.peek_token(2).kind != .rsbr))
 				|| p.peek_tok.kind == .dot) && language == .v && p.peek_tok.kind != .key_fn
 			is_on_top := ast_fields.len == 0 && !(is_field_mut || is_field_global)
 			mut field_name := ''
 			mut typ := ast.Type(0)
 			mut type_pos := token.Pos{}
 			mut field_pos := token.Pos{}
+			mut anon_struct_decl := ast.StructDecl{}
 			if is_embed {
 				// struct embedding
 				type_pos = p.tok.pos()
@@ -223,7 +237,18 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 						break
 					}
 				}
-				typ = p.parse_type()
+				p.inside_struct_field_decl = true
+				if p.tok.kind == .key_struct {
+					// Anon structs
+					if p.tok.kind == .key_struct {
+						anon_struct_decl = p.struct_decl(true)
+						// Find the registered anon struct type, it was registered above in `p.struct_decl()`
+						typ = p.table.find_type_idx(anon_struct_decl.name)
+					}
+				} else {
+					typ = p.parse_type()
+				}
+				p.inside_struct_field_decl = false
 				if typ.idx() == 0 {
 					// error is set in parse_type
 					return ast.StructDecl{}
@@ -236,6 +261,11 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 			if p.tok.kind == .lsbr {
 				// attrs are stored in `p.attrs`
 				p.attributes()
+				for fa in p.attrs {
+					if fa.name == 'deprecated' {
+						is_field_deprecated = true
+					}
+				}
 			}
 			mut default_expr := ast.empty_expr()
 			mut has_default_expr := false
@@ -258,6 +288,7 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 					pos: field_pos
 					type_pos: type_pos
 					comments: comments
+					i: i
 					default_expr: default_expr
 					has_default_expr: has_default_expr
 					attrs: p.attrs
@@ -265,6 +296,8 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 					is_mut: is_embed || is_field_mut
 					is_global: is_field_global
 					is_volatile: is_field_volatile
+					is_deprecated: is_field_deprecated
+					anon_struct_decl: anon_struct_decl
 				}
 			}
 			// save embeds as table fields too, it will be used in generation phase
@@ -274,6 +307,7 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 				pos: field_pos
 				type_pos: type_pos
 				comments: comments
+				i: i
 				default_expr: default_expr
 				has_default_expr: has_default_expr
 				attrs: p.attrs
@@ -281,14 +315,17 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 				is_mut: is_embed || is_field_mut
 				is_global: is_field_global
 				is_volatile: is_field_volatile
+				is_deprecated: is_field_deprecated
 			}
 			p.attrs = []
+			i++
 		}
 		p.top_level_statement_end()
 		last_line = p.tok.line_nr
 		p.check(.rcbr)
 	}
-	t := ast.TypeSymbol{
+	is_minify := attrs.contains('minify')
+	mut sym := ast.TypeSymbol{
 		kind: .struct_
 		language: language
 		name: name
@@ -300,21 +337,33 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 			is_typedef: attrs.contains('typedef')
 			is_union: is_union
 			is_heap: attrs.contains('heap')
+			is_minify: is_minify
 			is_generic: generic_types.len > 0
 			generic_types: generic_types
 			attrs: attrs
+			is_anon: is_anon
 		}
-		is_public: is_pub
+		is_pub: is_pub
 	}
-	if p.table.has_deep_child_no_ref(&t, name) {
+	if p.table.has_deep_child_no_ref(&sym, name) {
 		p.error_with_pos('invalid recursive struct `$orig_name`', name_pos)
 		return ast.StructDecl{}
 	}
-	mut ret := 0
-	// println('reg type symbol $name mod=$p.mod')
-	ret = p.table.register_sym(t)
+	mut ret := p.table.register_sym(sym)
+	if is_anon {
+		p.table.register_anon_struct(name, ret)
+	}
 	// allow duplicate c struct declarations
 	if ret == -1 && language != .c {
+		if _ := p.table.find_fn('main.main') {
+			if '.' in os.args {
+				p.error_with_pos('multiple `main` functions detected, and you ran `v .`
+perhaps there are multiple V programs in this directory, and you need to
+run them via `v file.v` instead',
+					name_pos)
+				return ast.StructDecl{}
+			}
+		}
 		p.error_with_pos('cannot register struct `$name`, another type with this name exists',
 			name_pos)
 		return ast.StructDecl{}
@@ -339,12 +388,12 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 	}
 }
 
-fn (mut p Parser) struct_init(typ_str string, short_syntax bool) ast.StructInit {
-	first_pos := (if short_syntax && p.prev_tok.kind == .lcbr { p.prev_tok } else { p.tok }).pos()
+fn (mut p Parser) struct_init(typ_str string, kind ast.StructInitKind) ast.StructInit {
+	first_pos := (if kind == .short_syntax && p.prev_tok.kind == .lcbr { p.prev_tok } else { p.tok }).pos()
 	p.struct_init_generic_types = []ast.Type{}
-	typ := if short_syntax { ast.void_type } else { p.parse_type() }
+	typ := if kind == .short_syntax { ast.void_type } else { p.parse_type() }
 	p.expr_mod = ''
-	if !short_syntax {
+	if kind != .short_syntax {
 		p.check(.lcbr)
 	}
 	pre_comments := p.eat_comments()
@@ -413,7 +462,7 @@ fn (mut p Parser) struct_init(typ_str string, short_syntax bool) ast.StructInit 
 			}
 		}
 	}
-	if !short_syntax {
+	if kind != .short_syntax {
 		p.check(.rcbr)
 	}
 	p.is_amp = saved_is_amp
@@ -426,9 +475,10 @@ fn (mut p Parser) struct_init(typ_str string, short_syntax bool) ast.StructInit 
 		update_expr_comments: update_expr_comments
 		has_update_expr: has_update_expr
 		name_pos: first_pos
-		pos: first_pos.extend(if short_syntax { p.tok.pos() } else { p.prev_tok.pos() })
-		is_short: no_keys
-		is_short_syntax: short_syntax
+		pos: first_pos.extend(if kind == .short_syntax { p.tok.pos() } else { p.prev_tok.pos() })
+		no_keys: no_keys
+		is_short_syntax: kind == .short_syntax
+		is_anon: kind == .anon
 		pre_comments: pre_comments
 		generic_types: p.struct_init_generic_types
 	}
@@ -456,7 +506,15 @@ fn (mut p Parser) interface_decl() ast.InterfaceDecl {
 	}
 	name_pos := p.tok.pos()
 	p.check_for_impure_v(language, name_pos)
+	if p.disallow_declarations_in_script_mode() {
+		return ast.InterfaceDecl{}
+	}
 	modless_name := p.check_name()
+	if modless_name.len == 1 && modless_name[0].is_capital() {
+		p.error_with_pos('single letter capital names are reserved for generic template types.',
+			name_pos)
+		return ast.InterfaceDecl{}
+	}
 	if modless_name == 'IError' && p.mod != 'builtin' {
 		p.error_with_pos('cannot register interface `IError`, it is builtin interface type',
 			name_pos)
@@ -478,7 +536,7 @@ fn (mut p Parser) interface_decl() ast.InterfaceDecl {
 	}
 	// Declare the type
 	reg_idx := p.table.register_sym(
-		is_public: is_pub
+		is_pub: is_pub
 		kind: .interface_
 		name: interface_name
 		cname: util.no_dots(interface_name)
@@ -503,11 +561,13 @@ fn (mut p Parser) interface_decl() ast.InterfaceDecl {
 	// Parse fields or methods
 	mut fields := []ast.StructField{cap: 20}
 	mut methods := []ast.FnDecl{cap: 20}
+	mut embeds := []ast.InterfaceEmbedding{}
 	mut is_mut := false
 	mut mut_pos := -1
-	mut ifaces := []ast.InterfaceEmbedding{}
 	for p.tok.kind != .rcbr && p.tok.kind != .eof {
-		if p.tok.kind == .name && p.tok.lit.len > 0 && p.tok.lit[0].is_capital() {
+		if p.tok.kind == .name && p.tok.lit.len > 0 && p.tok.lit[0].is_capital()
+			&& (p.peek_tok.line_nr != p.tok.line_nr
+			|| p.peek_tok.kind !in [.name, .amp, .lsbr, .lpar]) {
 			iface_pos := p.tok.pos()
 			mut iface_name := p.tok.lit
 			iface_type := p.parse_type()
@@ -515,7 +575,7 @@ fn (mut p Parser) interface_decl() ast.InterfaceDecl {
 				iface_name = p.table.sym(iface_type).name
 			}
 			comments := p.eat_comments()
-			ifaces << ast.InterfaceEmbedding{
+			embeds << ast.InterfaceEmbedding{
 				name: iface_name
 				typ: iface_type
 				pos: iface_pos
@@ -541,7 +601,7 @@ fn (mut p Parser) interface_decl() ast.InterfaceDecl {
 				break
 			}
 			comments := p.eat_comments()
-			ifaces << ast.InterfaceEmbedding{
+			embeds << ast.InterfaceEmbedding{
 				name: from_mod_name
 				typ: from_mod_typ
 				pos: p.prev_tok.pos()
@@ -573,10 +633,6 @@ fn (mut p Parser) interface_decl() ast.InterfaceDecl {
 			}
 			if ts.has_method(name) {
 				p.error_with_pos('duplicate method `$name`', method_start_pos)
-				return ast.InterfaceDecl{}
-			}
-			if language == .v && util.contains_capital(name) {
-				p.error('interface methods cannot contain uppercase letters, use snake_case instead')
 				return ast.InterfaceDecl{}
 			}
 			// field_names << name
@@ -656,7 +712,7 @@ fn (mut p Parser) interface_decl() ast.InterfaceDecl {
 			}
 		}
 	}
-	info.embeds = ifaces.map(it.typ)
+	info.embeds = embeds.map(it.typ)
 	ts.info = info
 	p.top_level_statement_end()
 	p.check(.rcbr)
@@ -667,7 +723,7 @@ fn (mut p Parser) interface_decl() ast.InterfaceDecl {
 		typ: typ
 		fields: fields
 		methods: methods
-		embeds: ifaces
+		embeds: embeds
 		is_pub: is_pub
 		attrs: attrs
 		pos: pos

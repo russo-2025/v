@@ -1,6 +1,7 @@
 // Copyright (c) 2019-2022 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
+[has_globals]
 module util
 
 import os
@@ -12,7 +13,7 @@ import v.mathutil as mu
 // The filepath:line:col: format is the default C compiler error output format.
 // It allows editors and IDE's like emacs to quickly find the errors in the
 // output and jump to their source with a keyboard shortcut.
-// NB: using only the filename may lead to inability of IDE/editors
+// Note: using only the filename may lead to inability of IDE/editors
 // to find the source file, when the IDE has a different working folder than
 // v itself.
 // error_context_before - how many lines of source context to print before the pointer line
@@ -85,14 +86,18 @@ pub fn formatted_error(kind string, omsg string, filepath string, pos token.Pos)
 			path = path.replace_once(util.normalised_workdir, '')
 		}
 	}
-	//
-	position := '$path:${pos.line_nr + 1}:${mu.max(1, pos.col + 1)}:'
+
+	position := if filepath.len > 0 {
+		'$path:${pos.line_nr + 1}:${mu.max(1, pos.col + 1)}:'
+	} else {
+		''
+	}
 	scontext := source_file_context(kind, filepath, pos).join('\n')
 	final_position := bold(position)
 	final_kind := bold(color(kind, kind))
 	final_msg := emsg
 	final_context := if scontext.len > 0 { '\n$scontext' } else { '' }
-	//
+
 	return '$final_position $final_kind $final_msg$final_context'.trim_space()
 }
 
@@ -102,25 +107,22 @@ mut:
 	lines map[string][]string
 }
 
-[unsafe]
+__global lines_cache = &LinesCache{}
+
 pub fn cached_file2sourcelines(path string) []string {
-	mut static cache := &LinesCache(0)
-	if isnil(cache) {
-		cache = &LinesCache{}
-	}
-	if path.len == 0 {
-		unsafe { cache.lines.free() }
-		unsafe { free(cache) }
-		cache = &LinesCache(0)
-		return []string{}
-	}
-	if res := cache.lines[path] {
+	if res := lines_cache.lines[path] {
 		return res
 	}
 	source := read_file(path) or { '' }
-	res := source.split_into_lines()
-	cache.lines[path] = res
+	res := set_source_for_path(path, source)
 	return res
+}
+
+// set_source_for_path should be called for every file, over which you want to use util.formatted_error
+pub fn set_source_for_path(path string, source string) []string {
+	lines := source.split_into_lines()
+	lines_cache.lines[path] = lines
+	return lines
 }
 
 pub fn source_file_context(kind string, filepath string, pos token.Pos) []string {
@@ -152,7 +154,7 @@ pub fn source_file_context(kind string, filepath string, pos token.Pos) []string
 			mut pointerline_builder := strings.new_builder(sline.len)
 			for i := 0; i < start_column; {
 				if sline[i].is_space() {
-					pointerline_builder.write_byte(sline[i])
+					pointerline_builder.write_u8(sline[i])
 					i++
 				} else {
 					char_len := utf8_char_len(sline[i])

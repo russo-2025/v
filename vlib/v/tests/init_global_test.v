@@ -1,3 +1,4 @@
+// vtest flaky: true
 // vtest retry: 4
 import sync
 
@@ -53,6 +54,11 @@ fn test_no_type() {
 	assert testmap['asd'] == -7.25
 }
 
+fn test_fn_type() {
+	assert func2(22) == 22
+	assert func3(22) == '22'
+}
+
 __global (
 	intmap    map[string]int
 	numberfns map[string]fn () int
@@ -74,6 +80,13 @@ __global (
 		'qwe': 2.5
 		'asd': -7.25
 		'yxc': 3.125
+	}
+	func1     = fn () {}
+	func2     = fn (n int) int {
+		return n
+	}
+	func3     = fn (n int) string {
+		return '$n'
 	}
 )
 
@@ -156,7 +169,7 @@ fn switch2() u64 {
 fn test_global_mutex() {
 	assert f1 == 34.0625
 	t := go switch2()
-	for _ in 0 .. 2500000 {
+	for _ in 0 .. 25000 {
 		mtx.@lock()
 		f1, f2 = f2, f1
 		mtx.unlock()

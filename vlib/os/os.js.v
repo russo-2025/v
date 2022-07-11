@@ -12,6 +12,8 @@ pub const (
 	args           = []string{}
 )
 
+const executable_suffixes = ['']
+
 fn get_path_delimiter() string {
 	delimiter := ':'
 	$if js_node {
@@ -38,7 +40,7 @@ fn init() {
 // See http://pubs.opengroup.org/onlinepubs/9699919799/functions/realpath.html
 // Also https://insanecoding.blogspot.com/2007/11/pathmax-simply-isnt.html
 // and https://insanecoding.blogspot.com/2007/11/implementing-realpath-in-c.html
-// NB: this particular rabbit hole is *deep* ...
+// Note: this particular rabbit hole is *deep* ...
 pub fn real_path(fpath string) string {
 	$if js_node {
 		mut res := ''
@@ -160,8 +162,8 @@ pub fn glob(patterns ...string) ?[]string {
 }
 
 pub fn write_file_array(path string, buffer array) ? {
-	mut f := create(path) ?
-	f.write_array(buffer) ?
+	mut f := create(path)?
+	f.write_array(buffer)?
 	f.close()
 }
 

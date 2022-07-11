@@ -208,11 +208,21 @@ fn (mut r Repl) parse_import(line string) {
 	}
 }
 
+fn highlight_console_command(command string) string {
+	return term.bright_white(term.bright_bg_black(' $command '))
+}
+
+fn highlight_repl_command(command string) string {
+	return term.bright_white(term.bg_blue(' $command '))
+}
+
 fn print_welcome_screen() {
-	cmd_exit := term.highlight_command('exit')
-	cmd_help := term.highlight_command('v help')
-	file_main := term.highlight_command('main.v')
-	cmd_run := term.highlight_command('v run main.v')
+	cmd_exit := highlight_repl_command('exit')
+	cmd_list := highlight_repl_command('list')
+	cmd_help := highlight_repl_command('help')
+	cmd_v_help := highlight_console_command('v help')
+	cmd_v_run := highlight_console_command('v run main.v')
+	file_main := highlight_console_command('main.v')
 	vbar := term.bright_green('|')
 	width, _ := term.get_terminal_size() // get the size of the terminal
 	vlogo := [
@@ -224,11 +234,11 @@ fn print_welcome_screen() {
 		term.bright_blue(r'     \__/     '),
 	]
 	help_text := [
-		'Welcome to the V REPL (for help with V itself, type $cmd_exit, then run $cmd_help).',
-		'NB: the REPL is highly experimental. For best V experience, use a text editor, ',
-		'save your code in a $file_main file and execute: $cmd_run',
-		version.full_v_version(false),
-		'Use Ctrl-C or ${term.highlight_command('exit')} to exit, or ${term.highlight_command('help')} to see other available commands',
+		'Welcome to the V REPL (for help with V itself, type $cmd_exit, then run $cmd_v_help).',
+		'Note: the REPL is highly experimental. For best V experience, use a text editor, ',
+		'save your code in a $file_main file and execute: $cmd_v_run',
+		'${version.full_v_version(false)} . Use $cmd_list to see the accumulated program so far.',
+		'Use Ctrl-C or $cmd_exit to exit, or $cmd_help to see other available commands.',
 	]
 	if width >= 97 {
 		eprintln('${vlogo[0]}')
@@ -249,7 +259,7 @@ fn print_welcome_screen() {
 	}
 }
 
-fn run_repl(workdir string, vrepl_prefix string) {
+fn run_repl(workdir string, vrepl_prefix string) int {
 	if !is_stdin_a_pipe {
 		print_welcome_screen()
 	}
@@ -286,6 +296,15 @@ fn run_repl(workdir string, vrepl_prefix string) {
 		}
 		if line.len <= -1 || line == '' || line == 'exit' {
 			break
+		}
+		if exit_pos := line.index('exit') {
+			oparen := line[(exit_pos + 4)..].trim_space()
+			if oparen.starts_with('(') {
+				if closing := oparen.index(')') {
+					rc := oparen[1..closing].parse_int(0, 8) or { panic(err) }
+					return int(rc)
+				}
+			}
 		}
 		r.line = line
 		if r.line == '\n' {
@@ -343,7 +362,7 @@ fn run_repl(workdir string, vrepl_prefix string) {
 		if r.line.starts_with('print') {
 			source_code := r.current_source_code(false, false) + '\n$r.line\n'
 			os.write_file(file, source_code) or { panic(err) }
-			s := repl_run_vfile(file) or { return }
+			s := repl_run_vfile(file) or { return 1 }
 			print_output(s)
 		} else {
 			mut temp_line := r.line
@@ -368,13 +387,13 @@ fn run_repl(workdir string, vrepl_prefix string) {
 				'#include ',
 				'for ',
 				'or ',
-				'insert',
-				'delete',
-				'prepend',
-				'sort',
-				'clear',
-				'trim',
-				'as',
+				'insert(',
+				'delete(',
+				'prepend(',
+				'sort(',
+				'clear(',
+				'trim(',
+				' as ',
 			]
 			mut is_statement := false
 			if filter_line.count('=') % 2 == 1 {
@@ -387,7 +406,7 @@ fn run_repl(workdir string, vrepl_prefix string) {
 					}
 				}
 			}
-			// NB: starting a line with 2 spaces escapes the println heuristic
+			// Note: starting a line with 2 spaces escapes the println heuristic
 			if oline.starts_with('  ') {
 				is_statement = true
 			}
@@ -413,7 +432,7 @@ fn run_repl(workdir string, vrepl_prefix string) {
 				temp_source_code = r.current_source_code(true, false) + '\n$temp_line\n'
 			}
 			os.write_file(temp_file, temp_source_code) or { panic(err) }
-			s := repl_run_vfile(temp_file) or { return }
+			s := repl_run_vfile(temp_file) or { return 1 }
 			if !func_call && s.exit_code == 0 && !temp_flag {
 				for r.temp_lines.len > 0 {
 					if !r.temp_lines[0].starts_with('print') {
@@ -436,6 +455,7 @@ fn run_repl(workdir string, vrepl_prefix string) {
 			print_output(s)
 		}
 	}
+	return 0
 }
 
 fn convert_output(os_result os.Result) string {
@@ -480,7 +500,10 @@ fn main() {
 		println('  ... where vexepath is the full path to the v executable file')
 		return
 	}
-	run_repl(replfolder, replprefix)
+	if !is_stdin_a_pipe {
+		os.setenv('VCOLORS', 'always', true)
+	}
+	exit(run_repl(replfolder, replprefix))
 }
 
 fn rerror(s string) {

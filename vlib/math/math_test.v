@@ -222,6 +222,16 @@ fn test_nan() {
 	assert nan_f32 != nan_f32
 }
 
+fn test_angle_diff() {
+	for pair in [
+		[pi, pi_2, -pi_2],
+		[pi_2 * 3.0, pi_2, -pi],
+		[pi / 6.0, two_thirds * pi, pi_2],
+	] {
+		assert angle_diff(pair[0], pair[1]) == pair[2]
+	}
+}
+
 fn test_acos() {
 	for i := 0; i < math.vf_.len; i++ {
 		a := math.vf_[i] / 10
@@ -408,6 +418,16 @@ fn test_abs() {
 	}
 }
 
+fn test_abs_zero() {
+	ret1 := abs(0)
+	println(ret1)
+	assert '$ret1' == '0'
+
+	ret2 := abs(0.0)
+	println(ret2)
+	assert '$ret2' == '0'
+}
+
 fn test_floor() {
 	for i := 0; i < math.vf_.len; i++ {
 		f := floor(math.vf_[i])
@@ -494,6 +514,13 @@ fn test_mod() {
 	// verify precision of result for extreme inputs
 	f := mod(5.9790119248836734e+200, 1.1258465975523544)
 	assert (0.6447968302508578) == f
+}
+
+fn test_cbrt() {
+	cbrts := [2.0, 10, 56]
+	for idx, i in [8.0, 1000, 175_616] {
+		assert cbrt(i) == cbrts[idx]
+	}
 }
 
 fn test_exp() {
@@ -781,6 +808,17 @@ fn test_round() {
 	}
 }
 
+fn fn_test_round_sig() {
+	assert round_sig(4.3239437319748394, -1) == 4.3239437319748394
+	assert round_sig(4.3239437319748394, 0) == 4.0000000000000000
+	assert round_sig(4.3239437319748394, 1) == 4.3000000000000000
+	assert round_sig(4.3239437319748394, 2) == 4.3200000000000000
+	assert round_sig(4.3239437319748394, 3) == 4.3240000000000000
+	assert round_sig(4.3239437319748394, 6) == 4.3239440000000000
+	assert round_sig(4.3239437319748394, 12) == 4.323943731975
+	assert round_sig(4.3239437319748394, 17) == 4.3239437319748394
+}
+
 fn test_sin() {
 	for i := 0; i < math.vf_.len; i++ {
 		f := sin(math.vf_[i])
@@ -914,14 +952,40 @@ fn test_lcm() {
 }
 
 fn test_digits() {
-	digits_in_10th_base := digits(125, 10)
-	assert digits_in_10th_base[0] == 5
-	assert digits_in_10th_base[1] == 2
-	assert digits_in_10th_base[2] == 1
-	digits_in_16th_base := digits(15, 16)
-	assert digits_in_16th_base[0] == 15
-	negative_digits := digits(-4, 2)
-	assert negative_digits[2] == -1
+	// a small sanity check with a known number like 100,
+	// just written in different base systems:
+	assert digits(100, reverse: true) == [1, 0, 0]
+	assert digits(100, base: 2, reverse: true) == [1, 1, 0, 0, 1, 0, 0]
+	assert digits(100, base: 3, reverse: true) == [1, 0, 2, 0, 1]
+	assert digits(100, base: 4, reverse: true) == [1, 2, 1, 0]
+	assert digits(100, base: 8, reverse: true) == [1, 4, 4]
+	assert digits(100, base: 10, reverse: true) == [1, 0, 0]
+	assert digits(100, base: 12, reverse: true) == [8, 4]
+	assert digits(100, base: 16, reverse: true) == [6, 4]
+	assert digits(100, base: 20, reverse: true) == [5, 0]
+	assert digits(100, base: 32, reverse: true) == [3, 4]
+	assert digits(100, base: 64, reverse: true) == [1, 36]
+	assert digits(100, base: 128, reverse: true) == [100]
+	assert digits(100, base: 256, reverse: true) == [100]
+
+	assert digits(1234432112344321) == digits(1234432112344321, reverse: true)
+	assert digits(1234432112344321) == [1, 2, 3, 4, 4, 3, 2, 1, 1, 2, 3, 4, 4, 3, 2, 1]
+
+	assert digits(125, base: 10, reverse: true) == [1, 2, 5]
+	assert digits(125, base: 10).reverse() == [1, 2, 5]
+
+	assert digits(15, base: 16, reverse: true) == [15]
+	assert digits(127, base: 16, reverse: true) == [7, 15]
+	assert digits(65535, base: 16, reverse: true) == [15, 15, 15, 15]
+	assert digits(-65535, base: 16, reverse: true) == [-15, 15, 15, 15]
+
+	assert digits(-127) == [7, 2, -1]
+	assert digits(-127).reverse() == [-1, 2, 7]
+	assert digits(-127, reverse: true) == [-1, 2, 7]
+
+	assert digits(234, base: 7).reverse() == [4, 5, 3]
+
+	assert digits(67432, base: 12).reverse() == [3, 3, 0, 3, 4]
 }
 
 // Check that math functions of high angle values
@@ -965,4 +1029,22 @@ fn test_powi() {
 	assert powi(2, 62) == i64(4611686018427387904)
 	assert powi(0, -2) == -1 // div by 0
 	assert powi(2, -1) == 0
+}
+
+fn test_count_digits() {
+	assert count_digits(-999) == 3
+	assert count_digits(-100) == 3
+	assert count_digits(-99) == 2
+	assert count_digits(-10) == 2
+	assert count_digits(-1) == 1
+	assert count_digits(0) == 1
+	assert count_digits(1) == 1
+	assert count_digits(10) == 2
+	assert count_digits(99) == 2
+	assert count_digits(100) == 3
+	assert count_digits(999) == 3
+	//
+	assert count_digits(12345) == 5
+	assert count_digits(123456789012345) == 15
+	assert count_digits(-67345) == 5
 }

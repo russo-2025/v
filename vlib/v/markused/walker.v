@@ -96,7 +96,8 @@ pub fn (mut w Walker) mark_markused_globals() {
 	}
 }
 
-pub fn (mut w Walker) stmt(node ast.Stmt) {
+pub fn (mut w Walker) stmt(node_ ast.Stmt) {
+	mut node := unsafe { node_ }
 	match mut node {
 		ast.EmptyStmt {}
 		ast.AsmStmt {
@@ -215,7 +216,8 @@ fn (mut w Walker) exprs(exprs []ast.Expr) {
 	}
 }
 
-fn (mut w Walker) expr(node ast.Expr) {
+fn (mut w Walker) expr(node_ ast.Expr) {
+	mut node := unsafe { node_ }
 	match mut node {
 		ast.EmptyExpr {
 			// TODO make sure this doesn't happen
@@ -351,6 +353,7 @@ fn (mut w Walker) expr(node ast.Expr) {
 			}
 		}
 		ast.None {}
+		ast.Nil {}
 		ast.ParExpr {
 			w.expr(node.expr)
 		}
@@ -376,6 +379,11 @@ fn (mut w Walker) expr(node ast.Expr) {
 		}
 		ast.SelectorExpr {
 			w.expr(node.expr)
+			if node.expr_type != 0 {
+				if method := w.table.find_method(w.table.sym(node.expr_type), node.field_name) {
+					w.fn_by_name(method.fkey())
+				}
+			}
 		}
 		ast.SqlExpr {
 			w.expr(node.db_expr)

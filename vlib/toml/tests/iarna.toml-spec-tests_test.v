@@ -99,7 +99,7 @@ fn test_iarna_toml_spec_tests() ? {
 			if !hide_oks {
 				println('OK   [${i + 1}/$valid_test_files.len] "$valid_test_file"...')
 			}
-			toml_doc := toml.parse_file(valid_test_file) ?
+			toml_doc := toml.parse_file(valid_test_file)?
 			valid++
 		}
 		println('$valid/$valid_test_files.len TOML files were parsed correctly')
@@ -112,12 +112,12 @@ fn test_iarna_toml_spec_tests() ? {
 			println('Testing value output of $valid_test_files.len valid TOML files using "$jq"...')
 
 			if os.exists(compare_work_dir_root) {
-				os.rmdir_all(compare_work_dir_root) ?
+				os.rmdir_all(compare_work_dir_root)?
 			}
-			os.mkdir_all(compare_work_dir_root) ?
+			os.mkdir_all(compare_work_dir_root)?
 
 			jq_normalize_path := os.join_path(compare_work_dir_root, 'normalize.jq')
-			os.write_file(jq_normalize_path, jq_normalize) ?
+			os.write_file(jq_normalize_path, jq_normalize)?
 
 			valid = 0
 			e = 0
@@ -177,7 +177,7 @@ fn test_iarna_toml_spec_tests() ? {
 						run([python, '-c',
 							"'import sys, yaml, json; json.dump(yaml.load(sys.stdin, Loader=yaml.FullLoader), sys.stdout, indent=4)'",
 							'<', iarna_yaml_path, '>', converted_json_path]) or {
-							contents := os.read_file(iarna_yaml_path) ?
+							contents := os.read_file(iarna_yaml_path)?
 							// NOTE there's known errors with the python convertion method.
 							// For now we just ignore them as it's a broken tool - not a wrong test-case.
 							// Uncomment this print to see/check them.
@@ -193,26 +193,26 @@ fn test_iarna_toml_spec_tests() ? {
 				if !hide_oks {
 					println('OK   [${i + 1}/$valid_test_files.len] "$valid_test_file"...')
 				}
-				toml_doc := toml.parse_file(valid_test_file) ?
+				toml_doc := toml.parse_file(valid_test_file)?
 
 				v_toml_json_path := os.join_path(compare_work_dir_root, '${valid_test_file_name}.v.json')
 				iarna_toml_json_path := os.join_path(compare_work_dir_root, '${valid_test_file_name}.json')
 
-				os.write_file(v_toml_json_path, to_iarna(toml_doc.ast.table, converted_from_yaml)) ?
+				os.write_file(v_toml_json_path, to_iarna(toml_doc.ast.table, converted_from_yaml))?
 
 				if converted_json_path == '' {
 					converted_json_path = valid_test_file.all_before_last('.') + '.json'
 				}
-				iarna_json := os.read_file(converted_json_path) ?
-				os.write_file(iarna_toml_json_path, iarna_json) ?
+				iarna_json := os.read_file(converted_json_path)?
+				os.write_file(iarna_toml_json_path, iarna_json)?
 
 				v_normalized_json := run([jq, '-S', '-f "$jq_normalize_path"', v_toml_json_path]) or {
-					contents := os.read_file(v_toml_json_path) ?
+					contents := os.read_file(v_toml_json_path)?
 					panic(err.msg() + '\n$contents')
 				}
 				cmd := [jq, '-S', '-f "$jq_normalize_path"', iarna_toml_json_path]
 				iarna_normalized_json := run(cmd) or {
-					contents := os.read_file(v_toml_json_path) ?
+					contents := os.read_file(v_toml_json_path)?
 					panic(err.msg() + '\n$contents\n\ncmd: ${cmd.join(' ')}')
 				}
 
@@ -245,7 +245,7 @@ fn test_iarna_toml_spec_tests() ? {
 				println('OK   [${i + 1}/$invalid_test_files.len] "$invalid_test_file"...')
 			}
 			if toml_doc := toml.parse_file(invalid_test_file) {
-				content_that_should_have_failed := os.read_file(invalid_test_file) ?
+				content_that_should_have_failed := os.read_file(invalid_test_file)?
 				println('     This TOML should have failed:\n${'-'.repeat(40)}\n$content_that_should_have_failed\n${'-'.repeat(40)}')
 				assert false
 			} else {
@@ -288,15 +288,15 @@ fn to_iarna(value ast.Value, skip_value_map bool) string {
 		ast.Quoted {
 			json_text := json2.Any(value.text).json_str()
 			if skip_value_map {
-				return '"$json_text"'
+				return json_text
 			}
-			return '{ "type": "string", "value": "$json_text" }'
+			return '{ "type": "string", "value": $json_text }'
 		}
 		ast.DateTime {
 			// Normalization for json
 			mut json_text := json2.Any(value.text).json_str().to_upper().replace(' ',
 				'T')
-			typ := if json_text.ends_with('Z') || json_text.all_after('T').contains('-')
+			typ := if json_text.ends_with('Z"') || json_text.all_after('T').contains('-')
 				|| json_text.all_after('T').contains('+') {
 				'datetime'
 			} else {
@@ -306,40 +306,41 @@ fn to_iarna(value ast.Value, skip_value_map bool) string {
 			// It seems it's implementation specific how time and
 			// date-time values are represented in detail. For now we follow the BurntSushi format
 			// that expands to 6 digits which is also a valid RFC 3339 representation.
-			json_text = to_iarna_time(json_text)
+			json_text = to_iarna_time(json_text[1..json_text.len - 1])
 			if skip_value_map {
-				return '"$json_text"'
+				return json_text
 			}
 			return '{ "type": "$typ", "value": "$json_text" }'
 		}
 		ast.Date {
 			json_text := json2.Any(value.text).json_str()
 			if skip_value_map {
-				return '"$json_text"'
+				return json_text
 			}
-			return '{ "type": "date", "value": "$json_text" }'
+			return '{ "type": "date", "value": $json_text }'
 		}
 		ast.Time {
 			mut json_text := json2.Any(value.text).json_str()
-			json_text = to_iarna_time(json_text)
+			// Note: Removes the quotes of the encoded JSON string - Ned
+			json_text = to_iarna_time(json_text[1..json_text.len - 1])
 			if skip_value_map {
-				return '"$json_text"'
+				return json_text
 			}
 			return '{ "type": "time", "value": "$json_text" }'
 		}
 		ast.Bool {
 			json_text := json2.Any(value.text.bool()).json_str()
 			if skip_value_map {
-				return '$json_text'
+				return json_text
 			}
 			return '{ "type": "bool", "value": "$json_text" }'
 		}
 		ast.Null {
 			json_text := json2.Any(value.text).json_str()
 			if skip_value_map {
-				return '$json_text'
+				return json_text
 			}
-			return '{ "type": "null", "value": "$json_text" }'
+			return '{ "type": "null", "value": $json_text }'
 		}
 		ast.Number {
 			if value.text.contains('inf') {
@@ -384,7 +385,7 @@ fn to_iarna(value ast.Value, skip_value_map bool) string {
 			mut str := '{ '
 			for key, val in value {
 				json_key := json2.Any(key).json_str()
-				str += ' "$json_key": ${to_iarna(val, skip_value_map)},'
+				str += ' $json_key: ${to_iarna(val, skip_value_map)},'
 			}
 			str = str.trim_right(',')
 			str += ' }'

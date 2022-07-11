@@ -16,7 +16,7 @@ fn worker_fetch(p &pool.PoolProcessor, cursor int, worker_id int) voidptr {
 		println('failed to fetch data from /v0/item/${id}.json')
 		return pool.no_result
 	}
-	story := json.decode(Story, resp.text) or {
+	story := json.decode(Story, resp.body) or {
 		println('failed to decode a story')
 		return pool.no_result
 	}
@@ -30,17 +30,14 @@ fn main() {
 		println('failed to fetch data from /v0/topstories.json')
 		return
 	}
-	mut ids := json.decode([]int, resp.text) or {
+	ids := json.decode([]int, resp.body) or {
 		println('failed to decode topstories.json')
 		return
-	}
-	if ids.len > 10 {
-		ids = ids[0..10]
-	}
+	}#[0..10]
 	mut fetcher_pool := pool.new_pool_processor(
 		callback: worker_fetch
 	)
-	// NB: if you do not call set_max_jobs, the pool will try to use an optimal
+	// Note: if you do not call set_max_jobs, the pool will try to use an optimal
 	// number of threads, one per each core in your system, which in most
 	// cases is what you want anyway... You can override the automatic choice
 	// by setting the VJOBS environment variable too.

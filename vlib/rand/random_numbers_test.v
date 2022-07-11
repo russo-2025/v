@@ -179,10 +179,10 @@ fn test_rand_f64_in_range() {
 	}
 }
 
-fn test_rand_byte() {
-	mut all := []byte{}
+fn test_rand_u8() {
+	mut all := []u8{}
 	for _ in 0 .. 256 {
-		x := rand.byte()
+		x := rand.u8()
 		assert x >= 0
 		assert x <= 255
 		all << x
@@ -316,4 +316,98 @@ fn test_new_global_rng() {
 	ensure_same_output(mut rng3b)
 
 	rand.set_rng(old)
+}
+
+fn test_shuffle() {
+	mut arrays := [][]int{}
+	arrays << [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+	arrays << [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+	for seed in seeds {
+		a := get_n_random_ints(seed, 10)
+		arrays << a
+	}
+	mut digits := []map[int]int{len: 10}
+	for digit in 0 .. 10 {
+		digits[digit] = {}
+		for idx in 0 .. 10 {
+			digits[digit][idx] = 0
+		}
+	}
+	for mut a in arrays {
+		o := a.clone()
+		for _ in 0 .. 100 {
+			rand.shuffle(mut a) or { panic('shuffle failed') }
+			assert *a != o
+			for idx in 0 .. 10 {
+				digits[idx][a[idx]]++
+			}
+		}
+	}
+	for digit in 1 .. 10 {
+		assert digits[0] != digits[digit]
+	}
+	for digit in 0 .. 10 {
+		for idx in 0 .. 10 {
+			assert digits[digit][idx] > 10
+		}
+		// eprintln('digits[$digit]: ${digits[digit]}')
+	}
+}
+
+fn test_shuffle_partial() ? {
+	mut a := [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+	mut b := a.clone()
+
+	rand.shuffle(mut a, start: 4)?
+	assert a[..4] == b[..4]
+
+	a = b.clone()
+	rand.shuffle(mut a, start: 3, end: 7)?
+	assert a[..3] == b[..3]
+	assert a[7..] == b[7..]
+}
+
+fn test_shuffle_clone() {
+	original := [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+	mut a := original.clone()
+	mut results := [][]int{}
+	for _ in 0 .. 10 {
+		results << rand.shuffle_clone(a) or { panic('shuffle failed') }
+	}
+	assert original == a
+	for idx in 1 .. 10 {
+		assert results[idx].len == 10
+		assert results[idx] != results[0]
+		assert results[idx] != original
+	}
+}
+
+fn test_choose() ? {
+	lengths := [1, 3, 4, 5, 6, 7]
+	a := ['one', 'two', 'three', 'four', 'five', 'six', 'seven']
+	for length in lengths {
+		b := rand.choose(a, length)?
+		assert b.len == length
+		for element in b {
+			assert element in a
+			// make sure every element occurs once
+			mut count := 0
+			for e in b {
+				if e == element {
+					count++
+				}
+			}
+			assert count == 1
+		}
+	}
+}
+
+fn test_sample() {
+	k := 20
+	a := ['heads', 'tails']
+	b := rand.sample(a, k)
+	assert b.len == k
+	for element in b {
+		assert element in a
+	}
 }

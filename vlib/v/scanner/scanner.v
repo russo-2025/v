@@ -23,29 +23,29 @@ const (
 	backslash    = `\\`
 )
 
+[minify]
 pub struct Scanner {
 pub mut:
-	file_path         string // '/path/to/file.v'
-	file_base         string // 'file.v'
-	text              string // the whole text of the file
-	pos               int    // current position in the file, first character is s.text[0]
-	line_nr           int    // current line number
-	last_nl_pos       int = -1 // for calculating column
-	is_crlf           bool   // special check when computing columns
-	is_inside_string  bool   // set to true in a string, *at the start* of an $var or ${expr}
-	is_inter_start    bool   // for hacky string interpolation TODO simplify
-	is_inter_end      bool
-	is_enclosed_inter bool
-	line_comment      string
-	last_lt           int = -1 // position of latest <
-	// prev_tok                 TokenKind
+	file_path                   string // '/path/to/file.v'
+	file_base                   string // 'file.v'
+	text                        string // the whole text of the file
+	pos                         int    // current position in the file, first character is s.text[0]
+	line_nr                     int    // current line number
+	last_nl_pos                 int = -1 // for calculating column
+	is_crlf                     bool   // special check when computing columns
+	is_inside_string            bool   // set to true in a string, *at the start* of an $var or ${expr}
+	is_inter_start              bool   // for hacky string interpolation TODO simplify
+	is_inter_end                bool
+	is_enclosed_inter           bool
+	line_comment                string
+	last_lt                     int = -1 // position of latest <
 	is_started                  bool
 	is_print_line_on_error      bool
 	is_print_colored_error      bool
 	is_print_rel_paths_on_error bool
-	quote                       byte // which quote is used to denote current string: ' or "
-	inter_quote                 byte
-	nr_lines                    int  // total number of lines in the source file that were scanned
+	quote                       u8  // which quote is used to denote current string: ' or "
+	inter_quote                 u8
+	nr_lines                    int // total number of lines in the source file that were scanned
 	is_vh                       bool // Keep newlines
 	is_fmt                      bool // Used for v fmt.
 	comments_mode               CommentsMode
@@ -53,6 +53,7 @@ pub mut:
 	all_tokens                  []token.Token // *only* used in comments_mode: .toplevel_comments, contains all tokens
 	tidx                        int
 	eofs                        int
+	inter_cbr_count             int
 	pref                        &pref.Preferences
 	error_details               []string
 	errors                      []errors.Error
@@ -105,14 +106,11 @@ pub enum CommentsMode {
 }
 
 // new scanner from file.
-pub fn new_scanner_file(file_path string, comments_mode CommentsMode, pref &pref.Preferences) &Scanner {
+pub fn new_scanner_file(file_path string, comments_mode CommentsMode, pref &pref.Preferences) ?&Scanner {
 	if !os.is_file(file_path) {
-		verror('$file_path is not a file')
+		return error('$file_path is not a .v file')
 	}
-	raw_text := util.read_file(file_path) or {
-		verror(err.msg())
-		return voidptr(0)
-	}
+	raw_text := util.read_file(file_path) or { return err }
 	mut s := &Scanner{
 		pref: pref
 		text: raw_text
@@ -124,7 +122,7 @@ pub fn new_scanner_file(file_path string, comments_mode CommentsMode, pref &pref
 		file_path: file_path
 		file_base: os.base(file_path)
 	}
-	s.init_scanner()
+	s.scan_all_tokens_in_buffer()
 	return s
 }
 
@@ -141,18 +139,14 @@ pub fn new_scanner(text string, comments_mode CommentsMode, pref &pref.Preferenc
 		file_path: 'internal_memory'
 		file_base: 'internal_memory'
 	}
-	s.init_scanner()
+	s.scan_all_tokens_in_buffer()
 	return s
-}
-
-fn (mut s Scanner) init_scanner() {
-	s.scan_all_tokens_in_buffer(s.comments_mode)
 }
 
 [unsafe]
 pub fn (mut s Scanner) free() {
 	unsafe {
-		// NB: s.text is not freed here, because it is shared with all other util.read_file instances,
+		// Note: s.text is not freed here, because it is shared with all other util.read_file instances,
 		// and strings are not reference counted yet:
 		// s.text.free()
 		// .all_tokens however are not shared with anything, and can be freed:
@@ -166,7 +160,7 @@ fn (s &Scanner) should_parse_comment() bool {
 		|| (s.comments_mode == .toplevel_comments && !s.is_inside_toplvl_statement)
 }
 
-// NB: this is called by v's parser
+// Note: this is called by v's parser
 pub fn (mut s Scanner) set_is_inside_toplevel_statement(newstate bool) {
 	s.is_inside_toplvl_statement = newstate
 }
@@ -245,15 +239,15 @@ fn (s Scanner) num_lit(start int, end int) string {
 	unsafe {
 		txt := s.text.str
 		mut b := malloc_noscan(end - start + 1) // add a byte for the endstring 0
-		mut i1 := 0
-		for i := start; i < end; i++ {
+		mut i_no_sep := 0
+		for i in start .. end {
 			if txt[i] != scanner.num_sep {
-				b[i1] = txt[i]
-				i1++
+				b[i_no_sep] = txt[i]
+				i_no_sep++
 			}
 		}
-		b[i1] = 0 // C string compatibility
-		return b.vstring_with_len(i1)
+		b[i_no_sep] = 0 // C string compatibility
+		return b.vstring_with_len(i_no_sep)
 	}
 }
 
@@ -519,7 +513,7 @@ fn (mut s Scanner) ident_number() string {
 fn (mut s Scanner) skip_whitespace() {
 	for s.pos < s.text.len {
 		c := s.text[s.pos]
-		if c == 8 {
+		if c == 9 {
 			// tabs are most common
 			s.pos++
 			continue
@@ -558,7 +552,7 @@ fn (mut s Scanner) end_of_file() token.Token {
 	return s.new_eof_token()
 }
 
-pub fn (mut s Scanner) scan_all_tokens_in_buffer(mode CommentsMode) {
+pub fn (mut s Scanner) scan_all_tokens_in_buffer() {
 	mut timers := util.get_timers()
 	timers.measure_pause('PARSE')
 	util.timing_start('SCAN')
@@ -566,12 +560,9 @@ pub fn (mut s Scanner) scan_all_tokens_in_buffer(mode CommentsMode) {
 		util.timing_measure_cumulative('SCAN')
 		timers.measure_resume('PARSE')
 	}
-	oldmode := s.comments_mode
-	s.comments_mode = mode
 	// preallocate space for tokens
 	s.all_tokens = []token.Token{cap: s.text.len / 3}
 	s.scan_remaining_text()
-	s.comments_mode = oldmode
 	s.tidx = 0
 	$if debugscanner ? {
 		for t in s.all_tokens {
@@ -593,12 +584,8 @@ pub fn (mut s Scanner) scan_remaining_text() {
 	}
 }
 
-pub fn (mut s Scanner) scan() token.Token {
-	return s.buffer_scan()
-}
-
 [direct_array_access]
-pub fn (mut s Scanner) buffer_scan() token.Token {
+pub fn (mut s Scanner) scan() token.Token {
 	for {
 		cidx := s.tidx
 		s.tidx++
@@ -626,7 +613,7 @@ pub fn (s &Scanner) peek_token(n int) token.Token {
 }
 
 [direct_array_access; inline]
-fn (s &Scanner) look_ahead(n int) byte {
+fn (s &Scanner) look_ahead(n int) u8 {
 	if s.pos + n < s.text.len {
 		return s.text[s.pos + n]
 	} else {
@@ -643,13 +630,6 @@ fn (mut s Scanner) text_scan() token.Token {
 	// That optimization mostly matters for long sections
 	// of comments and string literals.
 	for {
-		// if s.comments_mode == .parse_comments {
-		// println('\nscan()')
-		// }
-		// if s.line_comment != '' {
-		// s.fgenln('// LC "$s.line_comment"')
-		// s.line_comment = ''
-		// }
 		if s.is_started {
 			s.pos++
 		} else {
@@ -823,7 +803,11 @@ fn (mut s Scanner) text_scan() token.Token {
 			`{` {
 				// Skip { in `${` in strings
 				if s.is_inside_string {
-					continue
+					if s.text[s.pos - 1] == `$` {
+						continue
+					} else {
+						s.inter_cbr_count++
+					}
 				}
 				return s.new_token(.lcbr, '', 1)
 			}
@@ -837,7 +821,7 @@ fn (mut s Scanner) text_scan() token.Token {
 			`}` {
 				// s = `hello $name !`
 				// s = `hello ${name} !`
-				if s.is_enclosed_inter {
+				if s.is_enclosed_inter && s.inter_cbr_count == 0 {
 					if s.pos < s.text.len - 1 {
 						s.pos++
 					} else {
@@ -852,6 +836,9 @@ fn (mut s Scanner) text_scan() token.Token {
 					ident_string := s.ident_string()
 					return s.new_token(.string, ident_string, ident_string.len + 2) // + two quotes
 				} else {
+					if s.inter_cbr_count > 0 {
+						s.inter_cbr_count--
+					}
 					return s.new_token(.rcbr, '', 1)
 				}
 			}
@@ -1026,7 +1013,7 @@ fn (mut s Scanner) text_scan() token.Token {
 					s.pos += 2
 					return s.new_token(.not_is, '', 3)
 				} else {
-					return s.new_token(.not, '', 1)
+					return s.new_token(.not, '!', 1)
 				}
 			}
 			`~` {
@@ -1059,13 +1046,12 @@ fn (mut s Scanner) text_scan() token.Token {
 							}
 						}
 						if is_separate_line_comment {
-							// NB: ´\x01´ is used to preserve the initial whitespace in comments
+							// Note: ´\x01´ is used to preserve the initial whitespace in comments
 							//     that are on a separate line
 							comment = '\x01' + comment
 						}
 						return s.new_token(.comment, comment, comment.len + 2)
 					}
-					// s.fgenln('// ${s.prev_tok.str()} "$s.line_comment"')
 					// Skip the comment (return the next token)
 					continue
 				} else if nextc == `*` { // Multiline comments
@@ -1130,7 +1116,7 @@ fn (s &Scanner) current_column() int {
 	return s.pos - s.last_nl_pos
 }
 
-fn (s &Scanner) count_symbol_before(p int, sym byte) int {
+fn (s &Scanner) count_symbol_before(p int, sym u8) int {
 	mut count := 0
 	for i := p; i >= 0; i-- {
 		if s.text[i] != sym {
@@ -1159,10 +1145,6 @@ fn (mut s Scanner) ident_string() string {
 			s.quote = q
 		}
 	}
-	// if s.file_path.contains('string_test') {
-	// println('\nident_string() at char=${s.text[s.pos].str()}')
-	// println('linenr=$s.line_nr quote=  $qquote ${qquote.str()}')
-	// }
 	mut n_cr_chars := 0
 	mut start := s.pos
 	start_char := s.text[start]
@@ -1282,7 +1264,7 @@ fn decode_h_escapes(s string, start int, escapes_pos []int) string {
 		idx := pos - start
 		end_idx := idx + 4 // "\xXX".len == 4
 		// notice this function doesn't do any decoding... it just replaces '\xc0' with the byte 0xc0
-		ss << [byte(strconv.parse_uint(s[idx + 2..end_idx], 16, 8) or { 0 })].bytestr()
+		ss << [u8(strconv.parse_uint(s[idx + 2..end_idx], 16, 8) or { 0 })].bytestr()
 		if i + 1 < escapes_pos.len {
 			ss << s[end_idx..escapes_pos[i + 1] - start]
 		} else {
@@ -1303,7 +1285,7 @@ fn decode_o_escapes(s string, start int, escapes_pos []int) string {
 		idx := pos - start
 		end_idx := idx + 4 // "\XXX".len == 4
 		// notice this function doesn't do any decoding... it just replaces '\141' with the byte 0o141
-		ss << [byte(strconv.parse_uint(s[idx + 1..end_idx], 8, 8) or { 0 })].bytestr()
+		ss << [u8(strconv.parse_uint(s[idx + 1..end_idx], 8, 8) or { 0 })].bytestr()
 		if i + 1 < escapes_pos.len {
 			ss << s[end_idx..escapes_pos[i + 1] - start]
 		} else {
@@ -1564,6 +1546,10 @@ pub fn (mut s Scanner) error(msg string) {
 		exit(1)
 	} else {
 		if s.pref.fatal_errors {
+			eprintln(util.formatted_error('error:', msg, s.file_path, pos))
+			if details.len > 0 {
+				eprintln(details)
+			}
 			exit(1)
 		}
 		if s.pref.message_limit >= 0 && s.errors.len >= s.pref.message_limit {
@@ -1593,11 +1579,6 @@ fn (mut s Scanner) vet_error(msg string, fix vet.FixKind) {
 		typ: .default
 	}
 	s.vet_errors << ve
-}
-
-[noreturn]
-pub fn verror(s string) {
-	util.verror('scanner error', s)
 }
 
 fn (mut s Scanner) trace(fbase string, message string) {

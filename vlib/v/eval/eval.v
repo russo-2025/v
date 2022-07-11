@@ -3,6 +3,7 @@
 // that can be found in the LICENSE file.
 module eval
 
+import os
 import v.ast
 import v.pref
 import v.util
@@ -30,34 +31,43 @@ pub mut:
 	return_values          []Object
 	cur_mod                string
 	cur_file               string
-	back_trace             []string
+	//
+	trace_file_paths     []string
+	trace_function_names []string
+	back_trace           []EvalTrace
 }
 
-pub fn (mut e Eval) eval(files []&ast.File) {
-	e.register_symbols(files)
+pub struct EvalTrace {
+	fn_idx   int
+	file_idx int
+	line     int
+}
+
+pub fn (mut e Eval) eval(mut files []&ast.File) {
+	e.register_symbols(mut files)
 	// println(files.map(it.path_base))
 	e.run_func(e.mods['main']['main'] or { ast.EmptyStmt{} } as ast.FnDecl)
 }
 
 // first arg is reciever (if method)
 pub fn (mut e Eval) run_func(func ast.FnDecl, _args ...Object) {
-	e.back_trace << func.name
+	e.back_trace << EvalTrace{func.idx, func.source_file.idx, func.pos.line_nr}
 	old_mod := e.cur_mod
-	e.cur_mod = func.mod
-
 	old_file := e.cur_file
+	e.cur_mod = func.mod
 	e.cur_file = func.file
 	defer {
 		e.cur_mod = old_mod
 		e.cur_file = old_file
 		e.back_trace.pop()
 	}
+	//
 	mut args := _args.clone()
 	if func.params.len != args.len && !func.is_variadic {
 		e.error('mismatched parameter length for $func.name: got `$args.len`, expected `$func.params.len`')
 	}
 
-	if func.name in ['print', 'println', 'eprint', 'eprintln'] {
+	if func.name in ['print', 'println', 'eprint', 'eprintln', 'panic'] {
 		s := args[0].string() // stringify because println accepts anything as argument
 		match func.name {
 			'print' {
@@ -71,6 +81,9 @@ pub fn (mut e Eval) run_func(func ast.FnDecl, _args ...Object) {
 			}
 			'eprintln' {
 				eprintln(s)
+			}
+			'panic' {
+				e.panic(s)
 			}
 			else {}
 		}
@@ -90,7 +103,7 @@ pub fn (mut e Eval) run_func(func ast.FnDecl, _args ...Object) {
 		}
 		if func.is_method {
 			print(e.back_trace)
-			println(func.receiver.typ - 65536)
+			println(func.receiver.typ.set_nr_muls(0))
 			e.local_vars[func.receiver.name] = Var{
 				val: args[0]
 				scope_idx: e.scope_idx
@@ -104,13 +117,18 @@ pub fn (mut e Eval) run_func(func ast.FnDecl, _args ...Object) {
 	}
 }
 
-pub fn (mut e Eval) register_symbols(files []&ast.File) {
-	for file in files {
-		// eprintln('registering file: $file.path_base')
+pub fn (mut e Eval) register_symbols(mut files []&ast.File) {
+	for mut file in files {
+		file.idx = e.trace_file_paths.len
+		e.trace_file_paths << file.path
 		mod := file.mod.name
-		e.register_symbol_stmts(file.stmts[1..], mod, file.path)
-
-		// eprintln('registered file: $file.path_base')
+		for mut stmt in file.stmts {
+			if mut stmt is ast.FnDecl {
+				stmt.idx = e.trace_function_names.len
+				e.trace_function_names << stmt.name
+			}
+		}
+		e.register_symbol_stmts(file.stmts, mod, file.path)
 	}
 	for mod, const_files in e.future_register_consts {
 		e.cur_mod = mod
@@ -133,14 +151,16 @@ pub fn (mut e Eval) register_symbols(files []&ast.File) {
 }
 
 pub fn (mut e Eval) register_symbol_stmts(stmts []ast.Stmt, mod string, file string) {
-	for stmt in stmts { // first is just module declaration, so ignore
+	for stmt in stmts {
 		e.register_symbol(stmt, mod, file)
 	}
 }
 
 pub fn (mut e Eval) register_symbol(stmt ast.Stmt, mod string, file string) {
 	match stmt {
-		ast.Module {}
+		ast.Module {
+			// ignore module declarations for now
+		}
 		ast.FnDecl {
 			// this mess because c error
 			x := ast.Stmt(stmt)
@@ -188,7 +208,7 @@ pub fn (mut e Eval) register_symbol(stmt ast.Stmt, mod string, file string) {
 								}
 							}
 							else {
-								eprintln('unsupported expression')
+								e.error('unsupported expression')
 							}
 						}
 					}
@@ -205,5 +225,28 @@ pub fn (mut e Eval) register_symbol(stmt ast.Stmt, mod string, file string) {
 }
 
 fn (e Eval) error(msg string) {
+	eprintln('> V interpeter backtrace:')
+	e.print_backtrace()
 	util.verror('interpreter', msg)
+}
+
+fn (e Eval) panic(s string) {
+	eprintln('V panic: $s')
+	eprintln('V hash: ${@VHASH}')
+	e.print_backtrace()
+	exit(1)
+}
+
+fn (e Eval) print_backtrace() {
+	for i := e.back_trace.len - 1; i >= 0; i-- {
+		t := e.back_trace[i]
+		file_path := if path := e.trace_file_paths[t.file_idx] {
+			os.real_path(path)
+		} else {
+			t.file_idx.str()
+		}
+		fn_name := e.trace_function_names[t.fn_idx] or { t.fn_idx.str() }
+		word := if i == e.back_trace.len - 1 { 'at' } else { 'by' }
+		eprintln('$file_path:${t.line + 1}: $word $fn_name')
+	}
 }

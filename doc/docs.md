@@ -1,5 +1,7 @@
 # V Documentation
 
+(See https://modules.vlang.io/ for documentation of V's standard library)
+
 ## Introduction
 
 V is a statically typed compiled programming language designed for building maintainable software.
@@ -20,12 +22,14 @@ The major way to get the latest and greatest V, is to __install it from source__
 It is __easy__, and it usually takes __only a few seconds__.
 
 ### Linux, macOS, FreeBSD, etc:
-You need `git`, and a C compiler like `tcc`, `gcc` or `clang`, and `make`:
+You need `git`, and a C compiler like `tcc`, `gcc`, `icc` or `clang`, and `make`:
 ```bash
 git clone https://github.com/vlang/v
 cd v
 make
 ```
+See [here](https://github.com/vlang/v/wiki/Installing-a-C-compiler-on-Linux-and-macOS)
+for how to install the development tools.
 
 ### Windows:
 You need `git`, and a C compiler like `tcc`, `gcc`, `clang` or `msvc`:
@@ -34,9 +38,12 @@ git clone https://github.com/vlang/v
 cd v
 make.bat -tcc
 ```
-NB: You can also pass one of `-gcc`, `-msvc`, `-clang` to `make.bat` instead,
+NB: You can also pass one of `-gcc`, `-msvc`, `-clang`, to `make.bat` instead,
 if you do prefer to use a different C compiler, but -tcc is small, fast, and
 easy to install (V will download a prebuilt binary automatically).
+
+For C compiler downloads and more info, see
+[here](https://github.com/vlang/v/wiki/Installing-a-C-compiler-on-Windows).
 
 It is recommended to add this folder to the PATH of your environment variables.
 This can be done with the command `v.exe symlink`.
@@ -77,6 +84,9 @@ For more details and troubleshooting, please visit the [vab GitHub repository](h
     * [Strings](#strings)
     * [Numbers](#numbers)
     * [Arrays](#arrays)
+        * [Multidimensional arrays](#multidimensional-arrays)
+        * [Array methods](#array-methods)
+        * [Array slices](#array-slices)
     * [Fixed size arrays](#fixed-size-arrays)
     * [Maps](#maps)
 * [Module imports](#module-imports)
@@ -97,7 +107,7 @@ For more details and troubleshooting, please visit the [vab GitHub repository](h
 </td><td width=33% valign=top>
 
 * [Functions 2](#functions-2)
-    * [Pure functions by default](#pure-functions-by-default)
+    * [Immutable function args by default](#immutable-function-args-by-default)
     * [Mutable arguments](#mutable-arguments)
     * [Variable number of arguments](#variable-number-of-arguments)
     * [Anonymous & higher-order functions](#anonymous--higher-order-functions)
@@ -105,7 +115,8 @@ For more details and troubleshooting, please visit the [vab GitHub repository](h
 * [References](#references)
 * [Constants](#constants)
 * [Builtin functions](#builtin-functions)
-* [Printing custom types](#printing-custom-types)
+    * [println](#println)
+    * [Dumping expressions at runtime](#dumping-expressions-at-runtime)
 * [Modules](#modules)
 * [Type Declarations](#type-declarations)
     * [Interfaces](#interfaces)
@@ -137,7 +148,6 @@ For more details and troubleshooting, please visit the [vab GitHub repository](h
 * [Package Management](#package-management)
 	* [Publish package](#publish-package)
 * [Advanced Topics](#advanced-topics)
-    * [Dumping expressions at runtime](#dumping-expressions-at-runtime)
     * [Memory-unsafe code](#memory-unsafe-code)
     * [Structs with reference fields](#structs-with-reference-fields)
     * [sizeof and __offsetof](#sizeof-and-__offsetof)
@@ -196,7 +206,7 @@ In this case `main` doesn't return anything, so there is no return type.
 
 As in many other languages (such as C, Go, and Rust), `main` is the entry point of your program.
 
-`println` is one of the few built-in functions.
+[`println`](#println) is one of the few [built-in functions](#builtin-functions).
 It prints the value passed to it to standard output.
 
 `fn main()` declaration can be skipped in one file programs.
@@ -333,8 +343,7 @@ the expression `T(v)` converts the value `v` to the
 type `T`.
 
 Unlike most other languages, V only allows defining variables in functions.
-Global (module level) variables are not allowed. There's no global state in V
-(see [Pure functions by default](#pure-functions-by-default) for details).
+Global (module level) variables are not allowed. There's no global state in V.
 
 For consistency across different code bases, all variable and function names
 must use the `snake_case` style, as opposed to type names, which must use `PascalCase`.
@@ -426,7 +435,7 @@ bool
 string
 
 i8    i16  int  i64      i128 (soon)
-byte  u16  u32  u64      u128 (soon)
+u8    u16  u32  u64      u128 (soon)
 
 rune // represents a Unicode code point
 
@@ -452,7 +461,7 @@ These are the allowed possibilities:
                   ↘     ↘
                     f32 → f64
                   ↗     ↗
- byte → u16 → u32 → u64 ⬎
+   u8 → u16 → u32 → u64 ⬎
       ↘     ↘     ↘      ptr
    i8 → i16 → int → i64 ⬏
 ```
@@ -482,7 +491,7 @@ d := b + x     // d is of type `f64` - automatic promotion of `x`'s value
 ```v nofmt
 name := 'Bob'
 assert name.len == 3       // will print 3
-assert name[0] == byte(66) // indexing gives a byte, byte(66) == `B`
+assert name[0] == u8(66) // indexing gives a byte, u8(66) == `B`
 assert name[1..3] == 'ob'  // slicing gives a string 'ob'
 
 // escape codes
@@ -491,7 +500,7 @@ assert windows_newline.len == 2
 
 // arbitrary bytes can be directly specified using `\x##` notation where `#` is
 // a hex digit aardvark_str := '\x61ardvark' assert aardvark_str == 'aardvark'
-assert '\xc0'[0] == byte(0xc0)
+assert '\xc0'[0] == u8(0xc0)
 
 // or using octal escape `\###` notation where `#` is an octal digit
 aardvark_str2 := '\141ardvark'
@@ -510,7 +519,7 @@ In V, a string is a read-only array of bytes. All Unicode characters are encoded
 s := 'hello 🌎' // emoji takes 4 bytes
 assert s.len == 10
 
-arr := s.bytes() // convert `string` to `[]byte`
+arr := s.bytes() // convert `string` to `[]u8`
 assert arr.len == 10
 
 s2 := arr.bytestr() // convert `[]byte` to `string`
@@ -606,7 +615,7 @@ Also note: in most cases, it's best to leave the format type empty. Floats will 
 default as `g`, integers will be rendered by default as `d`, and `s` is almost always redundant.
 There are only three cases where specifying a type is recommended:
 
-- format strings are parsed at compile time, so specifing a type can help detect errors then
+- format strings are parsed at compile time, so specifying a type can help detect errors then
 - format strings default to using lowercase letters for hex digits and the `e` in exponents. Use a
   uppercase type to force the use of uppercase hex digits and an uppercase `E` in exponents.
 - format strings are the most convenient way to get hex, binary or octal strings from an integer.
@@ -624,6 +633,9 @@ println('[${int(x):010}]') // pad with zeros on the left => [0000000123]
 println('[${int(x):b}]') // output as binary => [1111011]
 println('[${int(x):o}]') // output as octal => [173]
 println('[${int(x):X}]') // output as uppercase hex => [7B]
+
+println('[${10.0000:.2}]') // remove insignificant 0s at the end => [10]
+println('[${10.0000:.2f}]') // do show the 0s at the end, even though they do not change the number => [10.00]
 ```
 
 ### String operators
@@ -681,7 +693,7 @@ A `rune` can be converted to UTF-8 bytes by using the `.bytes()` method.
 
 ```v
 rocket := `🚀`
-assert rocket.bytes() == [byte(0xf0), 0x9f, 0x9a, 0x80]
+assert rocket.bytes() == [u8(0xf0), 0x9f, 0x9a, 0x80]
 ```
 
 Hex, Unicode, and Octal escape sequences also work in a `rune` literal:
@@ -693,9 +705,9 @@ assert `\u0061` == `a`
 
 // multibyte literals work too
 assert `\u2605` == `★`
-assert `\u2605`.bytes() == [byte(0xe2), 0x98, 0x85]
-assert `\xe2\x98\x85`.bytes() == [byte(0xe2), 0x98, 0x85]
-assert `\342\230\205`.bytes() == [byte(0xe2), 0x98, 0x85]
+assert `\u2605`.bytes() == [u8(0xe2), 0x98, 0x85]
+assert `\xe2\x98\x85`.bytes() == [u8(0xe2), 0x98, 0x85]
+assert `\342\230\205`.bytes() == [u8(0xe2), 0x98, 0x85]
 ```
 
 Note that `rune` literals use the same escape syntax as strings, but they can only hold one unicode
@@ -752,7 +764,7 @@ If you want a different type of integer, you can use casting:
 
 ```v
 a := i64(123)
-b := byte(42)
+b := u8(42)
 c := i16(12345)
 ```
 
@@ -774,19 +786,50 @@ f2 := 456e+2 // 45600
 ```
 
 ### Arrays
-#### Basic Array Concepts
-Arrays are collections of data elements of the same type. They can be represented by
-a list of elements surrounded by brackets. The elements can be accessed by appending
-an *index* (starting with `0`) in brackets to the array variable:
+
+An array is a collection of data elements of the same type. An array literal is a
+list of expressions surrounded by square brackets. An individual element can be
+accessed using an *index* expression. Indexes start from `0`:
 ```v
 mut nums := [1, 2, 3]
 println(nums) // `[1, 2, 3]`
 println(nums[0]) // `1`
 println(nums[1]) // `2`
+
 nums[1] = 5
 println(nums) // `[1, 5, 3]`
 ```
+
+<a id='array-operations' />
+
+An element can be appended to the end of an array using the push operator `<<`.
+It can also append an entire array.
+
+```v
+mut nums := [1, 2, 3]
+nums << 4
+println(nums) // "[1, 2, 3, 4]"
+
+// append array
+nums << [5, 6, 7]
+println(nums) // "[1, 2, 3, 4, 5, 6, 7]"
+```
+```v
+mut names := ['John']
+names << 'Peter'
+names << 'Sam'
+// names << 10  <-- This will not compile. `names` is an array of strings.
+```
+
+`val in array` returns true if the array contains `val`. See [`in` operator](#in-operator).
+
+```v
+names := ['John', 'Peter', 'Sam']
+println('Alex' in names) // "false"
+```
+
 #### Array Fields
+
 There are two fields that control the "size" of an array:
 * `len`: *length* - the number of pre-allocated and initialized elements in the array
 * `cap`: *capacity* - the amount of memory space which has been reserved for elements,
@@ -801,16 +844,18 @@ println(nums.cap) // "3" or greater
 nums = [] // The array is now empty
 println(nums.len) // "0"
 ```
+`data` is a field (of type `voidptr`) with the address of the first
+element. This is for low-level [`unsafe`](#memory-unsafe-code) code.
 
-Note that fields are read-only and can't be modified by the user.
+Note that the fields are read-only and can't be modified by the user.
 
 #### Array Initialization
-The basic initialization syntax is as described [above](#basic-array-concepts).
+
 The type of an array is determined by the first element:
 * `[1, 2, 3]` is an array of ints (`[]int`).
 * `['a', 'b']` is an array of strings (`[]string`).
 
-The user can explicitly specify the type for the first element: `[byte(16), 32, 64, 128]`.
+The user can explicitly specify the type for the first element: `[u8(16), 32, 64, 128]`.
 V arrays are homogeneous (all elements must have the same type).
 This means that code like `[1, 'a']` will not compile.
 
@@ -846,12 +891,15 @@ for i in 0 .. 1000 {
 	numbers << i
 }
 ```
-Note: The above code uses a [range `for`](#range-for) statement and a
-[push operator (`<<`)](#array-operations).
+Note: The above code uses a [range `for`](#range-for) statement.
 
-You can initialize the array by accessing the `it` variable as shown here:
+You can initialize the array by accessing the `it` variable which gives
+the index as shown here:
 
 ```v
+count := []int{len: 4, init: it}
+assert count == [0, 1, 2, 3]
+
 mut square := []int{len: 6, init: it * it}
 // square == [0, 1, 4, 9, 16, 25]
 ```
@@ -939,33 +987,6 @@ a[0][1][1] = 2
 println(a) // [[[0, 0], [0, 2], [0, 0]], [[0, 0], [0, 0], [0, 0]]]
 ```
 
-#### Array Operations
-
-Elements can be appended to the end of an array using the push operator `<<`.
-It can also append an entire array.
-
-```v
-mut nums := [1, 2, 3]
-nums << 4
-println(nums) // "[1, 2, 3, 4]"
-// append array
-nums << [5, 6, 7]
-println(nums) // "[1, 2, 3, 4, 5, 6, 7]"
-mut names := ['John']
-names << 'Peter'
-names << 'Sam'
-// names << 10  <-- This will not compile. `names` is an array of strings.
-```
-
-`val in array` returns true if the array contains `val`. See [`in` operator](#in-operator).
-
-```v
-names := ['John', 'Peter', 'Sam']
-println(names.len) // "3"
-println('Alex' in names) // "false"
-```
-
-
 #### Array methods
 
 All arrays can be easily printed with `println(arr)` and converted to a string
@@ -990,6 +1011,8 @@ even_fn := nums.filter(fn (x int) bool {
 	return x % 2 == 0
 })
 println(even_fn)
+```
+```v
 words := ['hello', 'world']
 upper := words.map(it.to_upper())
 println(upper) // ['HELLO', 'WORLD']
@@ -1000,7 +1023,8 @@ upper_fn := words.map(fn (w string) string {
 println(upper_fn) // ['HELLO', 'WORLD']
 ```
 
-`it` is a builtin variable which refers to element currently being processed in filter/map methods.
+`it` is a builtin variable which refers to the element currently being
+processed in filter/map methods.
 
 Additionally, `.any()` and `.all()` can be used to conveniently test
 for elements that satisfy a condition.
@@ -1011,26 +1035,30 @@ println(nums.any(it == 2)) // true
 println(nums.all(it >= 2)) // false
 ```
 
-There are further built in methods for arrays:
-* `b := a.repeat(n)` concatenate `n` times the elements of `a`
-* `a.insert(i, val)` insert new element `val` at index `i` and move all following elements upwards
-* `a.insert(i, [3, 4, 5])` insert several elements
-* `a.prepend(val)` insert value at beginning, equivalent to `a.insert(0, val)`
-* `a.prepend(arr)` insert elements of array `arr` at beginning
-* `a.trim(new_len)` truncate the length (if `new_length < a.len`, otherwise do nothing)
-* `a.clear()` empty the array (without changing `cap`, equivalent to `a.trim(0)`)
-* `a.delete_many(start, size)` removes `size` consecutive elements beginning with index `start`
+There are further built-in methods for arrays:
+* `a.repeat(n)` concatenates the array elements `n` times
+* `a.insert(i, val)` inserts a new element `val` at index `i` and
+  shifts all following elements to the right
+* `a.insert(i, [3, 4, 5])` inserts several elements
+* `a.prepend(val)` inserts a value at the beginning, equivalent to `a.insert(0, val)`
+* `a.prepend(arr)` inserts elements of array `arr` at the beginning
+* `a.trim(new_len)` truncates the length (if `new_length < a.len`, otherwise does nothing)
+* `a.clear()` empties the array without changing `cap` (equivalent to `a.trim(0)`)
+* `a.delete_many(start, size)` removes `size` consecutive elements from index `start`
   &ndash; triggers reallocation
 * `a.delete(index)` equivalent to `a.delete_many(index, 1)`
-* `v := a.first()` equivalent to `v := a[0]`
-* `v := a.last()` equivalent to `v := a[a.len - 1]`
-* `v := a.pop()` get last element and remove it from array
-* `a.delete_last()` remove last element from array
-* `b := a.reverse()` make `b` contain the elements of `a` in reversed order
-* `a.reverse_in_place()` reverse the order of elements in `a`
-* `a.join(joiner)` concatenate array of strings into a string using `joiner` string as a separator
+* `a.delete_last()` removes the last element
+* `a.first()` equivalent to `a[0]`
+* `a.last()` equivalent to `a[a.len - 1]`
+* `a.pop()` removes the last element and returns it
+* `a.reverse()` makes a new array with the elements of `a` in reverse order
+* `a.reverse_in_place()` reverses the order of elements in `a`
+* `a.join(joiner)` concatenates an array of strings into one string
+  using `joiner` string as a separator
 
-#### Sorting Arrays
+See also [vlib/arrays](https://modules.vlang.io/arrays.html).
+
+##### Sorting Arrays
 
 Sorting arrays of all kinds is very simple and intuitive. Special variables `a` and `b`
 are used when providing a custom sorting condition.
@@ -1154,11 +1182,11 @@ println(a) // [0, 1, 2, 3, 4, 5]
 println(b) // [7, 3]
 ```
 
-### Slices with negative indexes
+##### Slices with negative indexes
 
 V supports array and string slices with negative indexes.
 Negative indexing starts from the end of the array towards the start,
-for example `-3` is equal to `array.len - 3`. 
+for example `-3` is equal to `array.len - 3`.
 Negative slices have a different syntax from normal slices, i.e. you need
 to add a `gate` between the array name and the square bracket: `a#[..-3]`.
 The `gate` specifies that this is a different type of slice and remember that
@@ -1177,7 +1205,7 @@ println(a#[20..10]) // []
 println(a#[20..30]) // []
 ```
 
-### Array method chaining
+#### Array method chaining
 You can chain the calls of array methods like `.filter()` and `.map()` and use
 the `it` built-in variable to achieve a classic `map/filter` functional paradigm:
 
@@ -1266,6 +1294,16 @@ mm := map[string]int{}
 val := mm['bad_key'] or { panic('key not found') }
 ```
 
+You can also check, if a key is present, and get its value, if it was present, in one go:
+```v
+m := {
+	'abc': 'def'
+}
+if v := m['abc'] {
+	println('the map value for that key is: $v')
+}
+```
+
 The same optional check applies to arrays:
 
 ```v
@@ -1274,7 +1312,7 @@ large_index := 999
 val := arr[large_index] or { panic('out of bounds') }
 println(val)
 // you can also do this, if you want to *propagate* the access error:
-val2 := arr[333] ?
+val2 := arr[333]?
 println(val2)
 ```
 
@@ -1460,6 +1498,10 @@ x := Abc{
 if x.bar is MyStruct {
 	// x.bar is automatically casted
 	println(x.bar)
+} else if x.bar is MyStruct2 {
+	new_var := x.bar as MyStruct2
+	// ... or you can use `as` to create a type cast an alias manually:
+	println(new_var)
 }
 match x.bar {
 	MyStruct {
@@ -1836,7 +1878,7 @@ import os
 
 fn read_log() {
 	mut ok := false
-	mut f := os.open('log.txt') or { panic(err.msg) }
+	mut f := os.open('log.txt') or { panic(err) }
 	defer {
 		f.close()
 	}
@@ -1864,7 +1906,7 @@ enum State {
 
 // write log file and return number of bytes written
 fn write_log(s State) ?int {
-	mut f := os.create('log.txt') ?
+	mut f := os.create('log.txt')?
 	defer {
 		f.close()
 	}
@@ -1928,6 +1970,32 @@ println(p.x)
 
 The type of `p` is `&Point`. It's a [reference](#references) to `Point`.
 References are similar to Go pointers and C++ references.
+
+```v
+struct Foo {
+mut:
+	x int
+}
+
+fa := Foo{1}
+mut a := fa
+a.x = 2
+assert fa.x == 1
+assert a.x == 2
+
+// fb := Foo{ 1 }
+// mut b := &fb  // error: `fb` is immutable, cannot have a mutable reference to it
+// b.x = 2
+
+mut fc := Foo{1}
+mut c := &fc
+c.x = 2
+assert fc.x == 2
+assert c.x == 2
+println(fc) // Foo{ x: 2 }
+println(c) // &Foo{ x: 2 } // Note `&` prefixed.
+```
+see also [Stack and Heap](#stack-and-heap)
 
 ### Default field values
 
@@ -2058,29 +2126,9 @@ __global:
 	f int // public and mutable both inside and outside parent module
 }
 ```
-
-For example, here's the `string` type defined in the `builtin` module:
-
-```v ignore
-struct string {
-    str &byte
-pub:
-    len int
-}
-```
-
-It's easy to see from this definition that `string` is an immutable type.
-The byte pointer with the string data is not accessible outside `builtin` at all.
-The `len` field is public, but immutable:
-```v failcompile
-fn main() {
-	str := 'hello'
-	len := str.len // OK
-	str.len++ // Compilation error
-}
-```
-
-This means that defining public readonly fields is very easy in V.
+Private fields are available only inside the same [module](#modules), any attempt
+to directly access them from another module will cause an error during compilation.
+Public immutable fields are readonly everywhere.
 
 ### Methods
 
@@ -2190,7 +2238,7 @@ button.Size = Size{
 If multiple embedded structs have methods or fields with the same name, or if methods or fields
 with the same name are defined in the struct, you can call methods or assign to variables in
 the embedded struct like `button.Size.area()`.
-When you do not specify the embedded struct name, the method of the outermost struct will be 
+When you do not specify the embedded struct name, the method of the outermost struct will be
 targeted.
 
 ## Unions
@@ -2234,22 +2282,24 @@ Note that the embedded struct arguments are not necessarily stored in the order 
 
 ## Functions 2
 
-### Pure functions by default
+### Immutable function args by default
 
-V functions are pure by default, meaning that their return values are a function of their
-arguments only, and their evaluation has no side effects (besides I/O).
+In V function arguments are immutable by default, and mutable args have to be
+marked on call.
 
-This is achieved by a lack of global variables and all function arguments being
-immutable by default, even when [references](#references) are passed.
+Since there are also no globals, that means that the return values of the functions,
+are a function of their arguments only, and their evaluation has no side effects
+(unless the function uses I/O).
 
-V is not a purely functional language however.
+Function arguments are immutable by default, even when [references](#references) are passed.
+
+Note that V is not a purely functional language however.
 
 There is a compiler flag to enable global variables (`-enable-globals`), but this is
 intended for low-level applications like kernels and drivers.
 
 ### Mutable arguments
-
-It is possible to modify function arguments by using the keyword `mut`:
+It is possible to modify function arguments by declaring them with the keyword `mut`:
 
 ```v
 struct User {
@@ -2268,7 +2318,7 @@ user.register()
 println(user.is_registered) // "true"
 ```
 
-In this example, the receiver (which is simply the first argument) is marked as mutable,
+In this example, the receiver (which is just the first argument) is explicitly marked as mutable,
 so `register()` can change the user object. The same works with non-receiver arguments:
 
 ```v
@@ -2386,9 +2436,6 @@ fn main() {
 V supports closures too.
 This means that anonymous functions can inherit variables from the scope they were created in.
 They must do so explicitly by listing all variables that are inherited.
-
-> Warning: currently works on Unix-based, x64 architectures only.
-Some work is in progress to make closures work on Windows, then other architectures.
 
 ```v oksyntax
 my_int := 1
@@ -2598,16 +2645,22 @@ println('Top cities: ${top_cities.filter(.usa)}')
 Some functions are builtin like `println`. Here is the complete list:
 
 ```v ignore
-fn print(s string) // print anything on sdtout
-fn println(s string) // print anything and a newline on sdtout
+fn print(s string) // prints anything on stdout
+fn println(s string) // prints anything and a newline on stdout
 
-fn eprint(s string) // same as print(), but use stderr
-fn eprintln(s string) // same as println(), but use stderr
+fn eprint(s string) // same as print(), but uses stderr
+fn eprintln(s string) // same as println(), but uses stderr
 
-fn exit(code int) // terminate the program with a custom error code
-fn panic(s string) // print a message and backtraces on stderr, and terminate the program with error code 1
-fn print_backtrace() // print backtraces on stderr
+fn exit(code int) // terminates the program with a custom error code
+fn panic(s string) // prints a message and backtraces on stderr, and terminates the program with error code 1
+fn print_backtrace() // prints backtraces on stderr
 ```
+Note: Although the `print` functions take a string, V accepts other printable types too.
+See below for details.
+
+There is also a special built-in function called [`dump`](#dumping-expressions-at-runtime).
+
+### println
 
 `println` is a simple yet powerful builtin function, that can print anything:
 strings, numbers, arrays, maps, structs.
@@ -2624,12 +2677,14 @@ println([1, 2, 3]) // "[1, 2, 3]"
 println(User{ name: 'Bob', age: 20 }) // "User{name:'Bob', age:20}"
 ```
 
+See also [Array methods](#array-methods).
+
 <a id='custom-print-of-types' />
 
-## Printing custom types
+### Printing custom types
 
 If you want to define a custom print value for your type, simply define a
-`.str() string` method:
+`str() string` method:
 
 ```v
 struct Color {
@@ -2649,6 +2704,40 @@ red := Color{
 }
 println(red)
 ```
+
+### Dumping expressions at runtime
+
+You can dump/trace the value of any V expression using `dump(expr)`.
+For example, save this code sample as `factorial.v`, then run it with
+`v run factorial.v`:
+```v
+fn factorial(n u32) u32 {
+	if dump(n <= 1) {
+		return dump(1)
+	}
+	return dump(n * factorial(n - 1))
+}
+
+fn main() {
+	println(factorial(5))
+}
+```
+You will get:
+```
+[factorial.v:2] n <= 1: false
+[factorial.v:2] n <= 1: false
+[factorial.v:2] n <= 1: false
+[factorial.v:2] n <= 1: false
+[factorial.v:2] n <= 1: true
+[factorial.v:3] 1: 1
+[factorial.v:5] n * factorial(n - 1): 2
+[factorial.v:5] n * factorial(n - 1): 6
+[factorial.v:5] n * factorial(n - 1): 24
+[factorial.v:5] n * factorial(n - 1): 120
+120
+```
+Note that `dump(expr)` will trace both the source location,
+the expression itself, and the expression value.
 
 ## Modules
 
@@ -2876,7 +2965,7 @@ a convenience for writing `s.xyz()` instead of `xyz(s)`.
 N.B. This feature is NOT a "default implementation" like in C#.
 
 For example, if a struct `cat` is wrapped in an interface `a`, that has
-implemented a method with the same name `speak`, as a method implemented by 
+implemented a method with the same name `speak`, as a method implemented by
 the struct, and you do `a.speak()`, *only* the interface method is called:
 
 ```v
@@ -3065,6 +3154,50 @@ Output: `Grocery IDs: 0, 5, 6`.
 
 Operations are not allowed on enum variables; they must be explicitly cast to `int`.
 
+Enums can have methods, just like structs.
+
+```v
+enum Cycle {
+	one
+	two
+	three
+}
+
+fn (c Cycle) next() Cycle {
+	match c {
+		.one {
+			return .two
+		}
+		.two {
+			return .three
+		}
+		.three {
+			return .one
+		}
+	}
+}
+
+mut c := Cycle.one
+for _ in 0 .. 10 {
+	println(c)
+	c = c.next()
+}
+```
+
+Output:
+```
+one
+two
+three
+one
+two
+three
+one
+two
+three
+one
+```
+
 ### Sum types
 
 A sum type instance can hold a value of several different types. Use the `type`
@@ -3113,50 +3246,6 @@ fn main() {
 	tree := Node{0.5, left, right}
 	println(sum(tree)) // 0.2 + 0.3 + 0.4 + 0.5 = 1.4
 }
-```
-
-Enums can have methods, just like structs
-
-```v
-enum Cycle {
-	one
-	two
-	three
-}
-
-fn (c Cycle) next() Cycle {
-	match c {
-		.one {
-			return .two
-		}
-		.two {
-			return .three
-		}
-		.three {
-			return .one
-		}
-	}
-}
-
-mut c := Cycle.one
-for _ in 0 .. 10 {
-	println(c)
-	c = c.next()
-}
-```
-
-Output:
-```
-one
-two
-three
-one
-two
-three
-one
-two
-three
-one
 ```
 
 #### Dynamic casts
@@ -3345,7 +3434,7 @@ propagate the error:
 import net.http
 
 fn f(url string) ?string {
-	resp := http.get(url) ?
+	resp := http.get(url)?
 	return resp.text
 }
 ```
@@ -3377,7 +3466,7 @@ to break from the current block.
 Note that `break` and `continue` can only be used inside a `for` loop.
 
 V does not have a way to forcibly "unwrap" an optional (as other languages do,
-for instance Rust's `unwrap()` or Swift's `!`). To do this, use `or { panic(err.msg) }` instead.
+for instance Rust's `unwrap()` or Swift's `!`). To do this, use `or { panic(err) }` instead.
 
 ---
 The third method is to provide a default value at the end of the `or` block.
@@ -3416,13 +3505,13 @@ Above, `http.get` returns a `?http.Response`. `resp` is only in scope for the fi
 
 ## Custom error types
 
-V gives you the ability to define custom error types through the `IError` interface. 
-The interface requires two methods: `msg() string` and `code() int`. Every type that 
-implements these methods can be used as an error. 
+V gives you the ability to define custom error types through the `IError` interface.
+The interface requires two methods: `msg() string` and `code() int`. Every type that
+implements these methods can be used as an error.
 
-When defining a custom error type it is recommended to embed the builtin `Error` default 
-implementation. This provides an empty default implementation for both required methods, 
-so you only have to implement what you really need, and may provide additional utility 
+When defining a custom error type it is recommended to embed the builtin `Error` default
+implementation. This provides an empty default implementation for both required methods,
+so you only have to implement what you really need, and may provide additional utility
 functions in the future.
 
 ```v
@@ -3517,8 +3606,8 @@ println(compare(1.1, 1.2)) //         -1
 
 ## Concurrency
 ### Spawning Concurrent Tasks
-V's model of concurrency is very similar to Go's. To run `foo()` concurrently in
-a different thread, just call it with `go foo()`:
+V's model of concurrency is going to be very similar to Go's.
+For now, `go foo()` runs `foo()` concurrently in a different thread:
 
 ```v
 import math
@@ -3533,6 +3622,9 @@ fn main() {
 	// p will be run in parallel thread
 }
 ```
+
+> In V 0.4 `go foo()` will be automatically renamed via vfmt to `spawn foo()`,
+and there will be a way to launch a coroutine (a lightweight thread managed by the runtime).
 
 Sometimes it is necessary to wait until a parallel thread has finished. This can
 be done by assigning a *handle* to the started thread and calling the `wait()` method
@@ -3863,7 +3955,7 @@ println(user.last_name)
 println(user.age)
 // You can also decode JSON arrays:
 sfoos := '[{"x":123},{"x":456}]'
-foos := json.decode([]Foo, sfoos) ?
+foos := json.decode([]Foo, sfoos)?
 println(foos[0].x)
 println(foos[1].x)
 ```
@@ -3968,8 +4060,8 @@ If a test function has an error return type, any propagated errors will fail the
 import strconv
 
 fn test_atoi() ? {
-	assert strconv.atoi('1') ? == 1
-	assert strconv.atoi('one') ? == 1 // test will fail
+	assert strconv.atoi('1')? == 1
+	assert strconv.atoi('one')? == 1 // test will fail
 }
 ```
 
@@ -4030,17 +4122,16 @@ fn (data &MyType) free() {
 Just as the compiler frees C data types with C's `free()`, it will statically insert
 `free()` calls for your data type at the end of each variable's lifetime.
 
+Autofree can be enabled with an `-autofree` flag.
+
 For developers willing to have more low level control, autofree can be disabled with
 `-manualfree`, or by adding a `[manualfree]` on each function that wants manage its
 memory manually. (See [attributes](#attributes)).
 
-_Note: right now autofree is hidden behind the -autofree flag. It will be enabled by
-default in V 0.3. If autofree is not used, V programs will leak memory._
 
-Note 2: Autofree is still WIP. Until it stabilises and becomes the default, please 
-compile your long running processes with `-gc boehm`, which will use the 
-Boehm-Demers-Weiser conservative garbage collector, to free the memory, that your
-programs leak, at runtime.
+Note 2: Autofree is still WIP. Until it stabilises and becomes the default, please
+avoid using it. Right now allocations are handled by a minimal and well performing GC
+until V's autofree engine is production ready.
 
 ### Examples
 
@@ -4361,7 +4452,7 @@ struct Customer {
 	country   string [nonull]
 }
 
-db := sqlite.connect('customers.db') ?
+db := sqlite.connect('customers.db')?
 
 // you can create tables:
 // CREATE TABLE IF NOT EXISTS `Customer` (
@@ -4531,11 +4622,17 @@ v install ui
 
 Modules can be installed directly from git or mercurial repositories.
 ```powershell
-v install [--git|--hg] [url]
+v install [--once] [--git|--hg] [url]
 ```
 **Example:**
 ```powershell
 v install --git https://github.com/vlang/markdown
+```
+
+Sometimes you may want to install the dependencies **ONLY** if those are not installed:
+
+```
+v install --once [module]
 ```
 
 Removing a module with v:
@@ -4621,7 +4718,7 @@ Modules are up to date.
 	at the top of all files in your module. For `mymodule.v`:
 	```v
 	module mymodule
-	
+
 	pub fn hello_world() {
 		println('Hello World!')
 	}
@@ -4650,39 +4747,6 @@ Modules are up to date.
 to allow for a better search experience.
 
 # Advanced Topics
-
-## Dumping expressions at runtime
-You can dump/trace the value of any V expression using `dump(expr)`.
-For example, save this code sample as `factorial.v`, then run it with
-`v run factorial.v`:
-```v
-fn factorial(n u32) u32 {
-	if dump(n <= 1) {
-		return dump(1)
-	}
-	return dump(n * factorial(n - 1))
-}
-
-fn main() {
-	println(factorial(5))
-}
-```
-You will get:
-```
-[factorial.v:2] n <= 1: false
-[factorial.v:2] n <= 1: false
-[factorial.v:2] n <= 1: false
-[factorial.v:2] n <= 1: false
-[factorial.v:2] n <= 1: true
-[factorial.v:3] 1: 1
-[factorial.v:5] n * factorial(n - 1): 2
-[factorial.v:5] n * factorial(n - 1): 6
-[factorial.v:5] n * factorial(n - 1): 24
-[factorial.v:5] n * factorial(n - 1): 120
-120
-```
-Note that `dump(expr)` will trace both the source location,
-the expression itself, and the expression value.
 
 ## Memory-unsafe code
 
@@ -5309,7 +5373,7 @@ Full list of builtin options:
 import os
 fn main() {
 	embedded_file := $embed_file('v.png')
-	os.write_file('exported.png', embedded_file.to_string()) ?
+	os.write_file('exported.png', embedded_file.to_string())?
 }
 ```
 
@@ -5333,7 +5397,7 @@ Currently only one compression type is supported: `zlib`
 import os
 fn main() {
 	embedded_file := $embed_file('v.png', .zlib) // compressed using zlib
-	os.write_file('exported.png', embedded_file.to_string()) ?
+	os.write_file('exported.png', embedded_file.to_string())?
 }
 ```
 
@@ -5384,9 +5448,6 @@ numbers: [1, 2, 3]
 3
 ```
 
-
-
-
 #### `$env`
 
 ```v
@@ -5401,6 +5462,34 @@ fn main() {
 V can bring in values at compile time from environment variables.
 `$env('ENV_VAR')` can also be used in top-level `#flag` and `#include` statements:
 `#flag linux -I $env('JAVA_HOME')/include`.
+
+#### `$compile_error` and `$compile_warn`
+
+These two comptime functions are very useful for displaying custom errors/warnings during
+compile time.
+
+Both receive as their only argument a string literal that contains the message to display:
+
+```v failcompile nofmt
+// x.v
+module main
+
+$if linux {
+    $compile_error('Linux is not supported')
+}
+
+fn main() {
+}
+
+$ v run x.v
+x.v:4:5: error: Linux is not supported
+    2 |
+    3 | $if linux {
+    4 |     $compile_error('Linux is not supported')
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    5 | }
+    6 |
+```
 
 ### Environment specific files
 
@@ -5488,7 +5577,7 @@ eprintln('file: ' + @FILE + ' | line: ' + @LINE + ' | fn: ' + @MOD + '.' + @FN)
 Another example, is if you want to embed the version/name from v.mod *inside* your executable:
 ```v ignore
 import v.vmod
-vm := vmod.decode( @VMOD_FILE ) or { panic(err.msg) }
+vm := vmod.decode( @VMOD_FILE ) or { panic(err) }
 eprintln('$vm.name $vm.version\n $vm.description')
 ```
 
@@ -5622,8 +5711,6 @@ For more examples, see [github.com/vlang/v/tree/master/vlib/v/tests/assembly/asm
 
 ## Translating C to V
 
-TODO: translating C to V will be available in V 0.3.
-
 V can translate your C code to human readable V code and generate V wrappers on top of C libraries.
 
 
@@ -5697,11 +5784,11 @@ fn main() {
 ```
 
 Build this example with `v -live message.v`.
-	
-You can also run this example with `v -live run message.v`. 
-	Make sure that in command you use a path to a V's file, 
-	**not** a path to a folder (like `v -live run .`) - 
-	in that case you need to modify content of a folder (add new file, for example), 
+
+You can also run this example with `v -live run message.v`.
+	Make sure that in command you use a path to a V's file,
+	**not** a path to a folder (like `v -live run .`) -
+	in that case you need to modify content of a folder (add new file, for example),
 	because changes in *message.v* will have no effect.
 
 Functions that you want to be reloaded must have `[live]` attribute
@@ -5725,7 +5812,12 @@ or
 ```shell
 v -os linux .
 ```
+NB: Cross-compiling a windows binary on a linux machine requires the GNU C compiler for 
+MinGW-w64 (targeting Win64) to first be installed.
 
+```shell
+sudo apt-get install gcc-mingw-w64-x86-64
+```
 (Cross compiling for macOS is temporarily not possible.)
 
 If you don't have any C dependencies, that's all you need to do. This works even
@@ -5751,28 +5843,28 @@ An example `deploy.vsh`:
 // so it can be run just by specifying the path to the file
 // once it's made executable using `chmod +x`.
 
-// Remove if build/ exits, ignore any errors if it doesn't
-rmdir_all('build') or { }
-
-// Create build/, never fails as build/ does not exist
-mkdir('build') ?
-
-// Move *.v files to build/
-result := execute('mv *.v build/') ?
-if result.exit_code != 0 {
-	println(result.output)
-}
-
 // print command then execute it
 fn sh(cmd string){
   println("❯ $cmd")
   print(execute_or_exit(cmd).output)
 }
 
+// Remove if build/ exits, ignore any errors if it doesn't
+rmdir_all('build') or { }
+
+// Create build/, never fails as build/ does not exist
+mkdir('build')?
+
+// Move *.v files to build/
+result := execute('mv *.v build/')
+if result.exit_code != 0 {
+	println(result.output)
+}
+
 sh('ls')
 
 // Similar to:
-// files := ls('.') ?
+// files := ls('.')?
 // mut count := 0
 // if files.len > 0 {
 //     for file in files {
@@ -5833,6 +5925,19 @@ fn main() {
 }
 ```
 
+Struct field deprecations:
+```v oksyntax
+module abc
+
+// Note that only *direct* accesses to Xyz.d in *other modules*, will produce deprecation notices/warnings:
+pub struct Xyz {
+pub mut:
+	a int
+	d int [deprecated: 'use Xyz.a instead'; deprecated_after: '2999-03-01'] // produce a notice, the deprecation date is in the far future
+}
+```
+
+Function/method deprecations:
 ```v
 // Calling this function will result in a deprecation warning
 [deprecated]
@@ -5930,9 +6035,14 @@ fn custom_allocations() {
 struct C.Foo {
 }
 
-// Used in Win32 API code when you need to pass callback function
-[windows_stdcall]
+// Used to add a custom calling convention to a function, available calling convention: stdcall, fastcall and cdecl.
+// This list aslo apply for type aliases (see below).
+[callconv: "stdcall"]
 fn C.DefWindowProc(hwnd int, msg int, lparam int, wparam int)
+
+// Used to add a custom calling convention to a function type aliases.
+[callconv: "fastcall"]
+type FastFn = fn (int) bool
 
 // Windows only:
 // If a default graphics library is imported (ex. gg, ui), then the graphical window takes
@@ -5971,7 +6081,7 @@ a nested loop, and those do not risk violating memory-safety.
 
 ## Appendix I: Keywords
 
-V has 41 reserved keywords (3 are literals):
+V has 42 reserved keywords (3 are literals):
 
 ```v ignore
 as
@@ -5983,7 +6093,6 @@ const
 continue
 defer
 else
-embed
 enum
 false
 fn
@@ -5995,6 +6104,7 @@ import
 in
 interface
 is
+isreftype
 lock
 match
 module
@@ -6042,15 +6152,15 @@ This lists operators for [primitive types](#primitive-types) only.
 
 <<   left shift             integer << unsigned integer
 >>   right shift            integer >> unsigned integer
->>>  unsigned right shift	integer >> unsigned integer
+>>>  unsigned right shift   integer >> unsigned integer
 
 
 Precedence    Operator
-    5             *  /  %  <<  >> >>> &
-    4             +  -  |  ^
-    3             ==  !=  <  <=  >  >=
-    2             &&
-    1             ||
+    5            *  /  %  <<  >> >>> &
+    4            +  -  |  ^
+    3            ==  !=  <  <=  >  >=
+    2            &&
+    1            ||
 
 
 Assignment Operators

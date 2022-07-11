@@ -4,12 +4,14 @@ fn main() {
 		exit(0)
 	}
 
-	println('
-NB: `tcc` was not used, so unless you install it yourself, your backend
+	$if !macos {
+		println('
+Note: `tcc` was not used, so unless you install it yourself, your backend
 C compiler will be `cc`, which is usually either `clang`, `gcc` or `msvc`.
 
 These C compilers, are several times slower at compiling C source code,
 compared to `tcc`. They do produce more optimised executables, but that
 is done at the cost of compilation speed.
 ')
+	}
 }

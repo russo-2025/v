@@ -92,10 +92,10 @@ pub:
 	custom_bold_font_path string
 	ui_mode               bool // refreshes only on events to save CPU usage
 	// font bytes for embedding
-	font_bytes_normal []byte
-	font_bytes_bold   []byte
-	font_bytes_mono   []byte
-	font_bytes_italic []byte
+	font_bytes_normal []u8
+	font_bytes_bold   []u8
+	font_bytes_mono   []u8
+	font_bytes_italic []u8
 	native_rendering  bool // Cocoa on macOS/iOS, GDI+ on Windows
 	// drag&drop
 	enable_dragndrop             bool // enable file dropping (drag'n'drop), default is false
@@ -128,7 +128,7 @@ pub mut:
 	ui_mode     bool // do not redraw everything 60 times/second, but only when the user requests
 	frame       u64  // the current frame counted from the start of the application; always increasing
 	//
-	mbtn_mask     byte
+	mbtn_mask     u8
 	mouse_buttons MouseButtons // typed version of mbtn_mask; easier to use for user programs
 	mouse_pos_x   int
 	mouse_pos_y   int
@@ -142,6 +142,7 @@ pub mut:
 	pressed_keys      [key_code_max]bool // an array representing all currently pressed keys
 	pressed_keys_edge [key_code_max]bool // true when the previous state of pressed_keys,
 	// *before* the current event was different
+	fps FPSConfig
 }
 
 fn gg_init_sokol_window(user_data voidptr) {
@@ -222,6 +223,26 @@ fn gg_init_sokol_window(user_data voidptr) {
 	ctx.timage_pip = sgl.make_pipeline(&pipdesc)
 	//
 	if ctx.config.init_fn != voidptr(0) {
+		$if android {
+			// NOTE on Android sokol can emit resize events *before* the init function is
+			// called (Android has to initialize a lot more through the Activity system to
+			// reach a valid coontext) and thus the user's code will miss the resize event.
+			// To prevent this we emit a custom window resize event, if the screen size has
+			// changed meanwhile.
+			win_size := ctx.window_size()
+			if ctx.width != win_size.width || ctx.height != win_size.height {
+				ctx.width = win_size.width
+				ctx.height = win_size.height
+				if ctx.config.resized_fn != voidptr(0) {
+					e := Event{
+						typ: .resized
+						window_width: ctx.width
+						window_height: ctx.height
+					}
+					ctx.config.resized_fn(&e, ctx.user_data)
+				}
+			}
+		}
 		ctx.config.init_fn(ctx.user_data)
 	}
 	// Create images now that we can do that after sg is inited
@@ -268,12 +289,12 @@ fn gg_event_fn(ce voidptr, user_data voidptr) {
 	}
 	if e.typ == .mouse_down {
 		bitplace := int(e.mouse_button)
-		ctx.mbtn_mask |= byte(1 << bitplace)
+		ctx.mbtn_mask |= u8(1 << bitplace)
 		ctx.mouse_buttons = MouseButtons(ctx.mbtn_mask)
 	}
 	if e.typ == .mouse_up {
 		bitplace := int(e.mouse_button)
-		ctx.mbtn_mask &= ~(byte(1 << bitplace))
+		ctx.mbtn_mask &= ~(u8(1 << bitplace))
 		ctx.mouse_buttons = MouseButtons(ctx.mbtn_mask)
 	}
 	if e.typ == .mouse_move && e.mouse_button == .invalid {
@@ -389,7 +410,7 @@ fn gg_fail_fn(msg &char, user_data voidptr) {
 
 //---- public methods
 
-//
+// new_context returns an initialized `Context` allocated on the heap.
 pub fn new_context(cfg Config) &Context {
 	mut ctx := &Context{
 		user_data: cfg.user_data
@@ -430,6 +451,7 @@ pub fn new_context(cfg Config) &Context {
 	return ctx
 }
 
+// run starts the main loop of the context.
 pub fn (ctx &Context) run() {
 	sapp.run(&ctx.window)
 }
@@ -439,6 +461,7 @@ pub fn (ctx &Context) quit() {
 	sapp.request_quit() // does not require ctx right now, but sokol multi-window might in the future
 }
 
+// set_bg_color sets the color of the window background to `c`.
 pub fn (mut ctx Context) set_bg_color(c gx.Color) {
 	ctx.clear_pass = gfx.create_clear_pass(f32(c.r) / 255.0, f32(c.g) / 255.0, f32(c.b) / 255.0,
 		f32(c.a) / 255.0)
@@ -450,12 +473,13 @@ pub fn (mut ctx Context) resize(width int, height int) {
 	ctx.height = height
 }
 
+// refresh_ui requests a complete re-draw of the window contents.
 pub fn (mut ctx Context) refresh_ui() {
 	ctx.needs_refresh = true
 	ctx.ticks = 0
 }
 
-// Prepares the context for drawing
+// begin prepares the context for drawing.
 pub fn (ctx &Context) begin() {
 	if ctx.render_text && ctx.font_inited {
 		ctx.ft.flush()
@@ -465,8 +489,15 @@ pub fn (ctx &Context) begin() {
 	sgl.ortho(0.0, f32(sapp.width()), f32(sapp.height()), 0.0, -1.0, 1.0)
 }
 
-// Finishes drawing for the context
+// end finishes drawing for the context.
 pub fn (ctx &Context) end() {
+	$if show_fps ? {
+		ctx.show_fps()
+	} $else {
+		if ctx.fps.show {
+			ctx.show_fps()
+		}
+	}
 	gfx.begin_default_pass(ctx.clear_pass, sapp.width(), sapp.height())
 	sgl.draw()
 	gfx.end_pass()
@@ -477,6 +508,47 @@ pub fn (ctx &Context) end() {
 		wait_events()
 	}
 	*/
+}
+
+pub struct FPSConfig {
+pub mut:
+	x           int
+	y           int
+	width       int
+	height      int
+	show        bool // do not show by default, use `-d show_fps` or set it manually in your app to override with: `app.gg.fps.show = true`
+	text_config gx.TextCfg = gx.TextCfg{
+		color: gx.yellow
+		size: 20
+		align: .center
+		vertical_align: .middle
+	}
+	background_color gx.Color = gx.Color{
+		r: 0
+		g: 0
+		b: 0
+		a: 128
+	}
+}
+
+pub fn (ctx &Context) show_fps() {
+	if !ctx.font_inited {
+		return
+	}
+	frame_duration := sapp.frame_duration()
+	sgl.defaults()
+	sgl.matrix_mode_projection()
+	sgl.ortho(0.0, f32(sapp.width()), f32(sapp.height()), 0.0, -1.0, 1.0)
+	ctx.set_cfg(ctx.fps.text_config)
+	if ctx.fps.width == 0 {
+		mut fps := unsafe { &ctx.fps }
+		fps.width, fps.height = ctx.text_size('00') // maximum size; prevents blinking on variable width fonts
+	}
+	fps_text := int(0.5 + 1.0 / frame_duration).str()
+	ctx.draw_rect_filled(ctx.fps.x, ctx.fps.y, ctx.fps.width + 2, ctx.fps.height + 4,
+		ctx.fps.background_color)
+	ctx.draw_text(ctx.fps.x + ctx.fps.width / 2 + 1, ctx.fps.y + ctx.fps.height / 2 + 2,
+		fps_text, ctx.fps.text_config)
 }
 
 fn (mut ctx Context) set_scale() {
@@ -500,7 +572,7 @@ fn (mut ctx Context) set_scale() {
 			}
 		}
 	}
-	// NB: on older X11, `Xft.dpi` from ~/.Xresources, that sokol uses,
+	// Note: on older X11, `Xft.dpi` from ~/.Xresources, that sokol uses,
 	// may not be set which leads to sapp.dpi_scale reporting incorrectly 0.0
 	if s < 0.1 {
 		s = 1.0
@@ -508,6 +580,7 @@ fn (mut ctx Context) set_scale() {
 	ctx.scale = s
 }
 
+// window_size returns the current dimensions of the window.
 pub fn (ctx Context) window_size() Size {
 	s := ctx.scale
 	return Size{int(sapp.width() / s), int(sapp.height() / s)}
@@ -515,14 +588,14 @@ pub fn (ctx Context) window_size() Size {
 
 //---- public module functions
 
-// dpi_scale returns the DPI scale coefficient for the screen
+// dpi_scale returns the DPI scale coefficient for the screen.
 // Do not use for Android development, use `Context.scale` instead.
 pub fn dpi_scale() f32 {
 	mut s := sapp.dpi_scale()
 	$if android {
 		s *= android_dpi_scale()
 	}
-	// NB: on older X11, `Xft.dpi` from ~/.Xresources, that sokol uses,
+	// Note: on older X11, `Xft.dpi` from ~/.Xresources, that sokol uses,
 	// may not be set which leads to sapp.dpi_scale reporting incorrectly 0.0
 	if s < 0.1 {
 		s = 1.0
@@ -530,10 +603,12 @@ pub fn dpi_scale() f32 {
 	return s
 }
 
+// high_dpi returns true if `gg` is running on a high DPI monitor or screen.
 pub fn high_dpi() bool {
 	return C.sapp_high_dpi()
 }
 
+// screen_size returns the size of the active screen.
 pub fn screen_size() Size {
 	$if macos {
 		return C.gg_get_screen_size()
@@ -548,7 +623,7 @@ pub fn screen_size() Size {
 	return Size{}
 }
 
-// window_size returns the `Size` of the active window
+// window_size returns the `Size` of the active window.
 // Do not use for Android development, use `Context.window_size()` instead.
 pub fn window_size() Size {
 	s := dpi_scale()

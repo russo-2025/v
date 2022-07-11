@@ -8,6 +8,7 @@ import math.bits
 import rand.config
 import rand.constants
 import rand.wyrand
+import time
 
 // PRNG is a common interface for all PRNGs that can be used seamlessly with the rand
 // modules's API. It defines all the methods that a PRNG (in the vlib or custom made) must
@@ -15,53 +16,30 @@ import rand.wyrand
 pub interface PRNG {
 mut:
 	seed(seed_data []u32)
-	// TODO: Support buffering for bytes
-	// byte() byte
-	// bytes(bytes_needed int) ?[]byte
-	// u16() u16
+	u8() u8
+	u16() u16
 	u32() u32
 	u64() u64
+	block_size() int
 	free()
 }
 
-// byte returns a uniformly distributed pseudorandom 8-bit unsigned positive `byte`.
+// bytes returns a buffer of `bytes_needed` random bytes
 [inline]
-pub fn (mut rng PRNG) byte() byte {
-	// TODO: Reimplement for all PRNGs efficiently
-	return byte(rng.u32() & 0xff)
-}
-
-// bytes returns a buffer of `bytes_needed` random bytes.
-[inline]
-pub fn (mut rng PRNG) bytes(bytes_needed int) ?[]byte {
-	// TODO: Reimplement for all PRNGs efficiently
+pub fn (mut rng PRNG) bytes(bytes_needed int) ?[]u8 {
 	if bytes_needed < 0 {
 		return error('can not read < 0 random bytes')
 	}
-	mut res := []byte{cap: bytes_needed}
-	mut remaining := bytes_needed
 
-	for remaining > 8 {
-		mut value := rng.u64()
-		for _ in 0 .. 8 {
-			res << byte(value & 0xff)
-			value >>= 8
-		}
-		remaining -= 8
-	}
-	for remaining > 4 {
-		mut value := rng.u32()
-		for _ in 0 .. 4 {
-			res << byte(value & 0xff)
-			value >>= 8
-		}
-		remaining -= 4
-	}
-	for remaining > 0 {
-		res << rng.byte()
-		remaining -= 1
-	}
-	return res
+	mut buffer := []u8{len: bytes_needed}
+	read_internal(mut rng, mut buffer)
+
+	return buffer
+}
+
+// read fills in `buf` with a maximum of `buf.len` random bytes
+pub fn (mut rng PRNG) read(mut buf []u8) {
+	read_internal(mut rng, mut buf)
 }
 
 // u32n returns a uniformly distributed pseudorandom 32-bit signed positive `u32` in range `[0, max)`.
@@ -128,7 +106,7 @@ pub fn (mut rng PRNG) u32_in_range(min u32, max u32) ?u32 {
 	if max <= min {
 		return error('max must be greater than min')
 	}
-	return min + rng.u32n(max - min) ?
+	return min + rng.u32n(max - min)?
 }
 
 // u64_in_range returns a uniformly distributed pseudorandom 64-bit unsigned `u64` in range `[min, max)`.
@@ -137,7 +115,19 @@ pub fn (mut rng PRNG) u64_in_range(min u64, max u64) ?u64 {
 	if max <= min {
 		return error('max must be greater than min')
 	}
-	return min + rng.u64n(max - min) ?
+	return min + rng.u64n(max - min)?
+}
+
+// i8 returns a (possibly negative) pseudorandom 8-bit `i8`.
+[inline]
+pub fn (mut rng PRNG) i8() i8 {
+	return i8(rng.u8())
+}
+
+// i16 returns a (possibly negative) pseudorandom 16-bit `i16`.
+[inline]
+pub fn (mut rng PRNG) i16() i16 {
+	return i16(rng.u16())
 }
 
 // int returns a (possibly negative) pseudorandom 32-bit `int`.
@@ -170,7 +160,7 @@ pub fn (mut rng PRNG) intn(max int) ?int {
 	if max <= 0 {
 		return error('max has to be positive.')
 	}
-	return int(rng.u32n(u32(max)) ?)
+	return int(rng.u32n(u32(max))?)
 }
 
 // i64n returns a pseudorandom int that lies in `[0, max)`.
@@ -179,7 +169,7 @@ pub fn (mut rng PRNG) i64n(max i64) ?i64 {
 	if max <= 0 {
 		return error('max has to be positive.')
 	}
-	return i64(rng.u64n(u64(max)) ?)
+	return i64(rng.u64n(u64(max))?)
 }
 
 // int_in_range returns a pseudorandom `int` in range `[min, max)`.
@@ -189,7 +179,7 @@ pub fn (mut rng PRNG) int_in_range(min int, max int) ?int {
 		return error('max must be greater than min')
 	}
 	// This supports negative ranges like [-10, -5) because the difference is positive
-	return min + rng.intn(max - min) ?
+	return min + rng.intn(max - min)?
 }
 
 // i64_in_range returns a pseudorandom `i64` in range `[min, max)`.
@@ -198,7 +188,7 @@ pub fn (mut rng PRNG) i64_in_range(min i64, max i64) ?i64 {
 	if max <= min {
 		return error('max must be greater than min')
 	}
-	return min + rng.i64n(max - min) ?
+	return min + rng.i64n(max - min)?
 }
 
 // f32 returns a pseudorandom `f32` value in range `[0, 1)`.
@@ -213,40 +203,190 @@ pub fn (mut rng PRNG) f64() f64 {
 	return f64(rng.u64()) / constants.max_u64_as_f64
 }
 
-// f32n returns a pseudorandom `f32` value in range `[0, max)`.
+// f32n returns a pseudorandom `f32` value in range `[0, max]`.
 [inline]
 pub fn (mut rng PRNG) f32n(max f32) ?f32 {
-	if max <= 0 {
-		return error('max has to be positive.')
+	if max < 0 {
+		return error('max has to be non-negative.')
 	}
 	return rng.f32() * max
 }
 
-// f64n returns a pseudorandom `f64` value in range `[0, max)`.
+// f64n returns a pseudorandom `f64` value in range `[0, max]`.
 [inline]
 pub fn (mut rng PRNG) f64n(max f64) ?f64 {
-	if max <= 0 {
-		return error('max has to be positive.')
+	if max < 0 {
+		return error('max has to be non-negative.')
 	}
 	return rng.f64() * max
 }
 
-// f32_in_range returns a pseudorandom `f32` in range `[min, max)`.
+// f32_in_range returns a pseudorandom `f32` in range `[min, max]`.
 [inline]
 pub fn (mut rng PRNG) f32_in_range(min f32, max f32) ?f32 {
-	if max <= min {
-		return error('max must be greater than min')
+	if max < min {
+		return error('max must be greater than or equal to min')
 	}
-	return min + rng.f32n(max - min) ?
+	return min + rng.f32n(max - min)?
 }
 
-// i64_in_range returns a pseudorandom `i64` in range `[min, max)`.
+// i64_in_range returns a pseudorandom `i64` in range `[min, max]`.
 [inline]
 pub fn (mut rng PRNG) f64_in_range(min f64, max f64) ?f64 {
-	if max <= min {
-		return error('max must be greater than min')
+	if max < min {
+		return error('max must be greater than or equal to min')
 	}
-	return min + rng.f64n(max - min) ?
+	return min + rng.f64n(max - min)?
+}
+
+// ulid generates an Unique Lexicographically sortable IDentifier.
+// See https://github.com/ulid/spec .
+// Note: ULIDs can leak timing information, if you make them public, because
+// you can infer the rate at which some resource is being created, like
+// users or business transactions.
+// (https://news.ycombinator.com/item?id=14526173)
+pub fn (mut rng PRNG) ulid() string {
+	return internal_ulid_at_millisecond(mut rng, u64(time.utc().unix_time_milli()))
+}
+
+// ulid_at_millisecond does the same as `ulid` but takes a custom Unix millisecond timestamp via `unix_time_milli`.
+pub fn (mut rng PRNG) ulid_at_millisecond(unix_time_milli u64) string {
+	return internal_ulid_at_millisecond(mut rng, unix_time_milli)
+}
+
+// string_from_set returns a string of length `len` containing random characters sampled from the given `charset`
+pub fn (mut rng PRNG) string_from_set(charset string, len int) string {
+	return internal_string_from_set(mut rng, charset, len)
+}
+
+// string returns a string of length `len` containing random characters in range `[a-zA-Z]`.
+pub fn (mut rng PRNG) string(len int) string {
+	return internal_string_from_set(mut rng, rand.english_letters, len)
+}
+
+// hex returns a hexadecimal number of length `len` containing random characters in range `[a-f0-9]`.
+pub fn (mut rng PRNG) hex(len int) string {
+	return internal_string_from_set(mut rng, rand.hex_chars, len)
+}
+
+// ascii returns a random string of the printable ASCII characters with length `len`.
+pub fn (mut rng PRNG) ascii(len int) string {
+	return internal_string_from_set(mut rng, rand.ascii_chars, len)
+}
+
+// bernoulli returns true with a probability p. Note that 0 <= p <= 1.
+pub fn (mut rng PRNG) bernoulli(p f64) ?bool {
+	if p < 0 || p > 1 {
+		return error('$p is not a valid probability value.')
+	}
+	return rng.f64() <= p
+}
+
+// normal returns a normally distributed pseudorandom f64 in range `[0, 1)`.
+// NOTE: Use normal_pair() instead if you're generating a lot of normal variates.
+pub fn (mut rng PRNG) normal(conf config.NormalConfigStruct) ?f64 {
+	x, _ := rng.normal_pair(conf)?
+	return x
+}
+
+// normal_pair returns a pair of normally distributed pseudorandom f64 in range `[0, 1)`.
+pub fn (mut rng PRNG) normal_pair(conf config.NormalConfigStruct) ?(f64, f64) {
+	if conf.sigma <= 0 {
+		return error('Standard deviation must be positive')
+	}
+	// This is an implementation of the Marsaglia polar method
+	// See: https://doi.org/10.1137%2F1006063
+	// Also: https://en.wikipedia.org/wiki/Marsaglia_polar_method
+	for {
+		u := rng.f64_in_range(-1, 1) or { 0.0 }
+		v := rng.f64_in_range(-1, 1) or { 0.0 }
+
+		s := u * u + v * v
+		if s >= 1 || s == 0 {
+			continue
+		}
+		t := msqrt(-2 * mlog(s) / s)
+		x := conf.mu + conf.sigma * t * u
+		y := conf.mu + conf.sigma * t * v
+		return x, y
+	}
+	return error('Implementation error. Please file an issue.')
+}
+
+// binomial returns the number of successful trials out of n when the
+// probability of success for each trial is p.
+pub fn (mut rng PRNG) binomial(n int, p f64) ?int {
+	if p < 0 || p > 1 {
+		return error('$p is not a valid probability value.')
+	}
+	mut count := 0
+	for _ in 0 .. n {
+		if rng.bernoulli(p)! {
+			count++
+		}
+	}
+	return count
+}
+
+// exponential returns an exponentially distributed random number with the rate paremeter
+// lambda. It is expected that lambda is positive.
+pub fn (mut rng PRNG) exponential(lambda f64) f64 {
+	if lambda <= 0 {
+		panic('The rate (lambda) must be positive.')
+	}
+	// Use the inverse transform sampling method
+	return -mlog(rng.f64()) / lambda
+}
+
+// shuffle randomly permutates the elements in `a`. The range for shuffling is
+// optional and the entire array is shuffled by default. Leave the end as 0 to
+// shuffle all elements until the end.
+[direct_array_access]
+pub fn (mut rng PRNG) shuffle<T>(mut a []T, config config.ShuffleConfigStruct) ? {
+	config.validate_for(a)?
+	new_end := if config.end == 0 { a.len } else { config.end }
+	for i in config.start .. new_end {
+		x := rng.int_in_range(i, new_end) or { config.start + i }
+		// swap
+		a_i := a[i]
+		a[i] = a[x]
+		a[x] = a_i
+	}
+}
+
+// shuffle_clone returns a random permutation of the elements in `a`.
+// The permutation is done on a fresh clone of `a`, so `a` remains unchanged.
+pub fn (mut rng PRNG) shuffle_clone<T>(a []T, config config.ShuffleConfigStruct) ?[]T {
+	mut res := a.clone()
+	rng.shuffle(mut res, config)?
+	return res
+}
+
+// choose samples k elements from the array without replacement.
+// This means the indices cannot repeat and it restricts the sample size to be less than or equal to the size of the given array.
+// Note that if the array has repeating elements, then the sample may have repeats as well.
+pub fn (mut rng PRNG) choose<T>(array []T, k int) ?[]T {
+	n := array.len
+	if k > n {
+		return error('Cannot choose $k elements without replacement from a $n-element array.')
+	}
+	mut results := []T{len: k}
+	mut indices := []int{len: n, init: it}
+	rng.shuffle(mut indices)?
+	for i in 0 .. k {
+		results[i] = array[indices[i]]
+	}
+	return results
+}
+
+// sample samples k elements from the array with replacement.
+// This means the elements can repeat and the size of the sample may exceed the size of the array.
+pub fn (mut rng PRNG) sample<T>(array []T, k int) []T {
+	mut results := []T{len: k}
+	for i in 0 .. k {
+		results[i] = array[rng.intn(array.len) or { 0 }]
+	}
+	return results
 }
 
 __global default_rng &PRNG
@@ -311,6 +451,11 @@ pub fn u64_in_range(min u64, max u64) ?u64 {
 	return default_rng.u64_in_range(min, max)
 }
 
+// i16 returns a uniformly distributed pseudorandom 16-bit signed (possibly negative) `i16`.
+pub fn i16() i16 {
+	return default_rng.i16()
+}
+
 // int returns a uniformly distributed pseudorandom 32-bit signed (possibly negative) `int`.
 pub fn int() int {
 	return default_rng.int()
@@ -322,8 +467,8 @@ pub fn intn(max int) ?int {
 }
 
 // byte returns a uniformly distributed pseudorandom 8-bit unsigned positive `byte`.
-pub fn byte() byte {
-	return default_rng.byte()
+pub fn u8() u8 {
+	return default_rng.u8()
 }
 
 // int_in_range returns a uniformly distributed pseudorandom  32-bit signed int in range `[min, max)`.
@@ -388,8 +533,13 @@ pub fn f64_in_range(min f64, max f64) ?f64 {
 }
 
 // bytes returns a buffer of `bytes_needed` random bytes
-pub fn bytes(bytes_needed int) ?[]byte {
+pub fn bytes(bytes_needed int) ?[]u8 {
 	return default_rng.bytes(bytes_needed)
+}
+
+// read fills in `buf` a maximum of `buf.len` random bytes
+pub fn read(mut buf []u8) {
+	read_internal(mut default_rng, mut buf)
 }
 
 const (
@@ -397,3 +547,92 @@ const (
 	hex_chars       = 'abcdef0123456789'
 	ascii_chars     = '!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ\\^_`abcdefghijklmnopqrstuvwxyz{|}~'
 )
+
+// ulid generates an Unique Lexicographically sortable IDentifier.
+// See https://github.com/ulid/spec .
+// Note: ULIDs can leak timing information, if you make them public, because
+// you can infer the rate at which some resource is being created, like
+// users or business transactions.
+// (https://news.ycombinator.com/item?id=14526173)
+pub fn ulid() string {
+	return default_rng.ulid()
+}
+
+// ulid_at_millisecond does the same as `ulid` but takes a custom Unix millisecond timestamp via `unix_time_milli`.
+pub fn ulid_at_millisecond(unix_time_milli u64) string {
+	return default_rng.ulid_at_millisecond(unix_time_milli)
+}
+
+// string_from_set returns a string of length `len` containing random characters sampled from the given `charset`
+pub fn string_from_set(charset string, len int) string {
+	return default_rng.string_from_set(charset, len)
+}
+
+// string returns a string of length `len` containing random characters in range `[a-zA-Z]`.
+pub fn string(len int) string {
+	return string_from_set(rand.english_letters, len)
+}
+
+// hex returns a hexadecimal number of length `len` containing random characters in range `[a-f0-9]`.
+pub fn hex(len int) string {
+	return string_from_set(rand.hex_chars, len)
+}
+
+// ascii returns a random string of the printable ASCII characters with length `len`.
+pub fn ascii(len int) string {
+	return string_from_set(rand.ascii_chars, len)
+}
+
+// shuffle randomly permutates the elements in `a`. The range for shuffling is
+// optional and the entire array is shuffled by default. Leave the end as 0 to
+// shuffle all elements until the end.
+pub fn shuffle<T>(mut a []T, config config.ShuffleConfigStruct) ? {
+	default_rng.shuffle(mut a, config)?
+}
+
+// shuffle_clone returns a random permutation of the elements in `a`.
+// The permutation is done on a fresh clone of `a`, so `a` remains unchanged.
+pub fn shuffle_clone<T>(a []T, config config.ShuffleConfigStruct) ?[]T {
+	return default_rng.shuffle_clone(a, config)
+}
+
+// choose samples k elements from the array without replacement.
+// This means the indices cannot repeat and it restricts the sample size to be less than or equal to the size of the given array.
+// Note that if the array has repeating elements, then the sample may have repeats as well.
+pub fn choose<T>(array []T, k int) ?[]T {
+	return default_rng.choose(array, k)
+}
+
+// sample samples k elements from the array with replacement.
+// This means the elements can repeat and the size of the sample may exceed the size of the array.
+pub fn sample<T>(array []T, k int) []T {
+	return default_rng.sample(array, k)
+}
+
+// bernoulli returns true with a probability p. Note that 0 <= p <= 1.
+pub fn bernoulli(p f64) ?bool {
+	return default_rng.bernoulli(p)
+}
+
+// normal returns a normally distributed pseudorandom f64 in range `[0, 1)`.
+// NOTE: Use normal_pair() instead if you're generating a lot of normal variates.
+pub fn normal(conf config.NormalConfigStruct) ?f64 {
+	return default_rng.normal(conf)
+}
+
+// normal_pair returns a pair of normally distributed pseudorandom f64 in range `[0, 1)`.
+pub fn normal_pair(conf config.NormalConfigStruct) ?(f64, f64) {
+	return default_rng.normal_pair(conf)
+}
+
+// binomial returns the number of successful trials out of n when the
+// probability of success for each trial is p.
+pub fn binomial(n int, p f64) ?int {
+	return default_rng.binomial(n, p)
+}
+
+// exponential returns an exponentially distributed random number with the rate paremeter
+// lambda. It is expected that lambda is positive.
+pub fn exponential(lambda f64) f64 {
+	return default_rng.exponential(lambda)
+}

@@ -17,7 +17,7 @@ import v.dotgraph
 
 pub struct Builder {
 pub:
-	compiled_dir string // contains os.real_path() of the dir of the final file beeing compiled, or the dir itself when doing `v .`
+	compiled_dir string // contains os.real_path() of the dir of the final file being compiled, or the dir itself when doing `v .`
 	module_path  string
 pub mut:
 	checker             &checker.Checker
@@ -36,10 +36,12 @@ pub mut:
 	table               &ast.Table
 	ccoptions           CcompilerOptions
 	//
-	// NB: changes in mod `builtin` force invalidation of every other .v file
+	// Note: changes in mod `builtin` force invalidation of every other .v file
 	mod_invalidates_paths map[string][]string // changes in mod `os`, invalidate only .v files, that do `import os`
 	mod_invalidates_mods  map[string][]string // changes in mod `os`, force invalidation of mods, that do `import os`
 	path_invalidates_mods map[string][]string // changes in a .v file from `os`, invalidates `os`
+	crun_cache_keys       []string // target executable + top level source files; filled in by Builder.should_rebuild
+	executable_exists     bool     // if the executable already exists, don't remove new executable after `v run`
 }
 
 pub fn new_builder(pref &pref.Preferences) Builder {
@@ -53,6 +55,7 @@ pub fn new_builder(pref &pref.Preferences) Builder {
 	if pref.use_color == .never {
 		util.emanager.set_support_color(false)
 	}
+	table.pointer_size = if pref.m64 { 8 } else { 4 }
 	msvc := find_msvc(pref.m64) or {
 		if pref.ccompiler == 'msvc' {
 			// verror('Cannot find MSVC on this OS')
@@ -65,6 +68,10 @@ pub fn new_builder(pref &pref.Preferences) Builder {
 	if pref.show_callgraph || pref.show_depgraph {
 		dotgraph.start_digraph()
 	}
+	mut executable_name := pref.out_name
+	$if windows {
+		executable_name += '.exe'
+	}
 	return Builder{
 		pref: pref
 		table: table
@@ -72,6 +79,7 @@ pub fn new_builder(pref &pref.Preferences) Builder {
 		transformer: transformer.new_transformer_with_table(table, pref)
 		compiled_dir: compiled_dir
 		cached_msvc: msvc
+		executable_exists: os.is_file(executable_name)
 	}
 }
 
@@ -123,8 +131,8 @@ pub fn (mut b Builder) middle_stages() ? {
 }
 
 pub fn (mut b Builder) front_and_middle_stages(v_files []string) ? {
-	b.front_stages(v_files) ?
-	b.middle_stages() ?
+	b.front_stages(v_files)?
+	b.middle_stages()?
 }
 
 // parse all deps from already parsed files
@@ -153,7 +161,7 @@ pub fn (mut b Builder) parse_imports() {
 			done_imports << file.mod.name
 		}
 	}
-	// NB: b.parsed_files is appended in the loop,
+	// Note: b.parsed_files is appended in the loop,
 	// so we can not use the shorter `for in` form.
 	for i := 0; i < b.parsed_files.len; i++ {
 		ast_file := b.parsed_files[i]
@@ -214,6 +222,9 @@ pub fn (mut b Builder) parse_imports() {
 		}
 		exit(0)
 	}
+	if b.pref.dump_files != '' {
+		b.dump_files(b.parsed_files.map(it.path))
+	}
 	b.rebuild_modules()
 }
 
@@ -240,22 +251,25 @@ pub fn (mut b Builder) resolve_deps() {
 	for node in deps_resolved.nodes {
 		mods << node.name
 	}
+	b.dump_modules(mods)
 	if b.pref.is_verbose {
 		eprintln('------ imported modules: ------')
 		eprintln(mods.str())
 		eprintln('-------------------------------')
 	}
-	mut reordered_parsed_files := []&ast.File{}
-	for m in mods {
-		for pf in b.parsed_files {
-			if m == pf.mod.name {
-				reordered_parsed_files << pf
-				// eprintln('pf.mod.name: $pf.mod.name | pf.path: $pf.path')
+	unsafe {
+		mut reordered_parsed_files := []&ast.File{}
+		for m in mods {
+			for pf in b.parsed_files {
+				if m == pf.mod.name {
+					reordered_parsed_files << pf
+					// eprintln('pf.mod.name: $pf.mod.name | pf.path: $pf.path')
+				}
 			}
 		}
+		b.table.modules = mods
+		b.parsed_files = reordered_parsed_files
 	}
-	b.table.modules = mods
-	b.parsed_files = reordered_parsed_files
 }
 
 // graph of all imported modules
@@ -269,7 +283,7 @@ pub fn (b &Builder) import_graph() &depgraph.DepGraph {
 			deps << 'builtin'
 			if b.pref.backend == .c {
 				// TODO JavaScript backend doesn't handle os for now
-				if b.pref.is_vsh && p.mod.name !in ['os', 'dl'] {
+				if b.pref.is_vsh && p.mod.name !in ['os', 'dl', 'strings.textscanner'] {
 					deps << 'os'
 				}
 			}
@@ -302,7 +316,19 @@ pub fn (b Builder) v_files_from_dir(dir string) []string {
 	if b.pref.is_verbose {
 		println('v_files_from_dir ("$dir")')
 	}
-	return b.pref.should_compile_filtered_files(dir, files)
+	res := b.pref.should_compile_filtered_files(dir, files)
+	if res.len == 0 {
+		// Perhaps the .v files are stored in /src/ ?
+		src_path := os.join_path(dir, 'src')
+		if os.is_dir(src_path) {
+			if b.pref.is_verbose {
+				println('v_files_from_dir ("$src_path") (/src/)')
+			}
+			files = os.ls(src_path) or { panic(err) }
+			return b.pref.should_compile_filtered_files(src_path, files)
+		}
+	}
+	return res
 }
 
 pub fn (b Builder) log(s string) {
@@ -555,7 +581,9 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 				}
 			}
 			if redefines.len > 0 {
-				eprintln('redefinition of function `$fn_name`')
+				ferror := util.formatted_error('builder error:', 'redefinition of function `$fn_name`',
+					'', token.Pos{})
+				eprintln(ferror)
 				for redefine in redefines {
 					eprintln(util.formatted_error('conflicting declaration:', redefine.fheader,
 						redefine.fpath, redefine.f.pos))

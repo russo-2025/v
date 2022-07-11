@@ -63,7 +63,7 @@ const return_types = [
 // and parameters of type `typ`, to makes sure that all combinations work correctly
 fn test_closures_with_n_args() ? {
 	mut v_code := strings.new_builder(1024)
-	// NB: the type or value of the captured arg doesn't matter for this test,
+	// Note: the type or value of the captured arg doesn't matter for this test,
 	// as the entire closure context is always passed as one pointer anyways
 
 	v_code.write_string('struct BigStruct {')
@@ -80,8 +80,9 @@ fn test_closures_with_n_args() ? {
 			mut values := all_param_values[..i]
 			if typ == 'string' {
 				values = values.map("'$it'")
+			} else {
+				values = values.map('${typ}($it)')
 			}
-			values = values.map('${typ}($it)')
 
 			mut expected_val := if typ == 'string' {
 				s := all_param_values[..i].join('')
@@ -96,7 +97,7 @@ fn test_closures_with_n_args() ? {
 				"'127'", 'string'
 			}
 
-			// NB: the captured arg doesn't matter for this test, as closures always receive
+			// Note: the captured arg doesn't matter for this test, as closures always receive
 			// a pointer to the entire closure context as their last argument anyways
 			v_code.writeln("
 fn test_big_closure_${typ}_${i}() {
@@ -107,7 +108,11 @@ fn test_big_closure_${typ}_${i}() {
 	c := fn [z] (${params.join(', ')}) $return_type {
 		mut sum := z")
 			for j in 0 .. i {
-				v_code.writeln('\t\tsum += ${return_type}(${param_names[j]})')
+				if return_type == 'string' {
+					v_code.writeln('\t\tsum += ${param_names[j]}')
+				} else {
+					v_code.writeln('\t\tsum += ${return_type}(${param_names[j]})')
+				}
 			}
 			v_code.writeln("
 		return sum
@@ -136,7 +141,7 @@ fn test_big_closure_${typ}_${i}() {
 			} else {
 				'c(${values.join(', ')}) $assertion'
 			}
-			// NB: the captured arg doesn't matter for this test, as closures always receive
+			// Note: the captured arg doesn't matter for this test, as closures always receive
 			// a pointer to the entire closure context as their last argument anyways
 			v_code.writeln("
 fn test_closure_return_${styp}_${i}() ? {
@@ -158,9 +163,9 @@ fn test_closure_return_${styp}_${i}() ? {
 	code := v_code.str()
 	println('Compiling V code (${code.count('\n')} lines) ...')
 	wrkdir := os.join_path(os.temp_dir(), 'vtests', 'closures')
-	os.mkdir_all(wrkdir) ?
-	os.chdir(wrkdir) ?
-	os.write_file('closure_return_test.v', code) ?
+	os.mkdir_all(wrkdir)?
+	os.chdir(wrkdir)?
+	os.write_file('closure_return_test.v', code)?
 	vexe := os.getenv('VEXE')
 	res := os.execute('${os.quoted_path(vexe)} -keepc -cg -showcc closure_return_test.v')
 	if res.exit_code != 0 {

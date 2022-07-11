@@ -9,6 +9,9 @@ import v.token
 
 pub fn (mut p Parser) expr(precedence int) ast.Expr {
 	return p.check_expr(precedence) or {
+		if token.is_decl(p.tok.kind) && p.disallow_declarations_in_script_mode() {
+			return ast.empty_expr()
+		}
 		p.error_with_pos('invalid expression: unexpected $p.tok', p.tok.pos())
 	}
 }
@@ -20,6 +23,9 @@ pub fn (mut p Parser) check_expr(precedence int) ?ast.Expr {
 	p.is_stmt_ident = false
 	if !p.pref.is_fmt {
 		p.eat_comments()
+	}
+	if p.inside_if_cond {
+		p.if_cond_comments << p.eat_comments()
 	}
 	inside_array_lit := p.inside_array_lit
 	p.inside_array_lit = false
@@ -46,14 +52,10 @@ pub fn (mut p Parser) check_expr(precedence int) ?ast.Expr {
 				p.inside_match = false
 			} else if p.tok.lit == 'map' && p.peek_tok.kind == .lcbr && !(p.builtin_mod
 				&& p.file_base in ['map.v', 'map_d_gcboehm_opt.v']) {
-				p.warn_with_pos("deprecated map syntax, use syntax like `{'age': 20}`",
+				p.error_with_pos("deprecated map syntax, use syntax like `{'age': 20}`",
 					p.tok.pos())
-				p.next() // `map`
-				p.next() // `{`
-				node = p.map_init()
-				p.check(.rcbr) // `}`
 			} else {
-				if p.inside_if && p.is_generic_name() && p.peek_tok.kind != .dot {
+				if p.inside_comptime_if && p.is_generic_name() && p.peek_tok.kind != .dot {
 					// $if T is string {}
 					p.expecting_type = true
 				}
@@ -130,6 +132,12 @@ pub fn (mut p Parser) check_expr(precedence int) ?ast.Expr {
 		.key_select {
 			node = p.select_expr()
 		}
+		.key_nil {
+			node = ast.Nil{
+				pos: p.tok.pos()
+			}
+			p.next()
+		}
 		.number {
 			node = p.parse_number_literal()
 		}
@@ -200,12 +208,17 @@ pub fn (mut p Parser) check_expr(precedence int) ?ast.Expr {
 			p.next() // sizeof
 			p.check(.lpar)
 			pos := p.tok.pos()
-			is_known_var := p.mark_var_as_used(p.tok.lit)
+			mut is_known_var := p.mark_var_as_used(p.tok.lit)
 				|| p.table.global_scope.known_const(p.mod + '.' + p.tok.lit)
 			//|| p.table.known_fn(p.mod + '.' + p.tok.lit)
 			// assume `mod.` prefix leads to a type
-			is_type := p.known_import(p.tok.lit) || p.tok.kind.is_start_of_type()
+			mut is_type := p.known_import(p.tok.lit) || p.tok.kind.is_start_of_type()
 				|| (p.tok.lit.len > 0 && p.tok.lit[0].is_capital())
+
+			if p.tok.lit in ['c', 'r'] && p.peek_tok.kind == .string {
+				is_known_var = false
+				is_type = false
+			}
 			if is_known_var || !is_type {
 				expr := p.expr(0)
 				if is_reftype {
@@ -265,6 +278,9 @@ pub fn (mut p Parser) check_expr(precedence int) ?ast.Expr {
 			p.next()
 			p.check(.lpar)
 			expr := p.expr(0)
+			if p.tok.kind == .comma && p.peek_tok.kind == .rpar {
+				p.next()
+			}
 			p.check(.rpar)
 			node = ast.DumpExpr{
 				expr: expr
@@ -341,6 +357,11 @@ pub fn (mut p Parser) check_expr(precedence int) ?ast.Expr {
 			}
 		}
 		else {
+			if p.tok.kind == .key_struct && p.peek_tok.kind == .lcbr {
+				// Anonymous struct
+				p.next()
+				return p.struct_init('', .anon)
+			}
 			if p.tok.kind != .eof && !(p.tok.kind == .rsbr && p.inside_asm) {
 				// eof should be handled where it happens
 				return none
@@ -353,6 +374,9 @@ pub fn (mut p Parser) check_expr(precedence int) ?ast.Expr {
 			&& p.prev_tok.pos + p.prev_tok.len + 1 != p.peek_tok.pos {
 			return node
 		}
+	}
+	if p.inside_if_cond {
+		p.if_cond_comments << p.eat_comments()
 	}
 	return p.expr_with_left(node, precedence, is_stmt_ident)
 }
@@ -376,7 +400,9 @@ pub fn (mut p Parser) expr_with_left(left ast.Expr, precedence int, is_stmt_iden
 				return node
 			}
 			p.is_stmt_ident = is_stmt_ident
-		} else if p.tok.kind in [.lsbr, .nilsbr] && p.tok.line_nr == p.prev_tok.line_nr {
+		} else if p.tok.kind in [.lsbr, .nilsbr] && (p.tok.line_nr == p.prev_tok.line_nr
+			|| (p.prev_tok.kind == .string
+			&& p.tok.line_nr == p.prev_tok.line_nr + p.prev_tok.lit.count('\n'))) {
 			if p.tok.kind == .nilsbr {
 				node = p.index_expr(node, true)
 			} else {
@@ -419,7 +445,7 @@ pub fn (mut p Parser) expr_with_left(left ast.Expr, precedence int, is_stmt_iden
 			right := p.expr(precedence - 1)
 			pos.update_last_line(p.prev_tok.line_nr)
 			if mut node is ast.IndexExpr {
-				node.recursive_mapset_is_setter(true)
+				node.recursive_arraymap_set_is_setter()
 			}
 			node = ast.InfixExpr{
 				left: node
@@ -428,16 +454,8 @@ pub fn (mut p Parser) expr_with_left(left ast.Expr, precedence int, is_stmt_iden
 				pos: pos
 				is_stmt: true
 			}
-		} else if p.tok.kind.is_infix() {
-			if p.tok.kind.is_prefix() && p.tok.line_nr != p.prev_tok.line_nr {
-				// return early for deref assign `*x = 2` goes to prefix expr
-				if p.tok.kind == .mul && p.peek_token(2).kind == .assign {
-					return node
-				}
-				// added 10/2020: LATER this will be parsed as PrefixExpr instead
-				p.warn_with_pos('move infix `$p.tok.kind` operator before new line (if infix intended) or use brackets for a prefix expression',
-					p.tok.pos())
-			}
+		} else if p.tok.kind.is_infix() && !(p.tok.kind in [.minus, .amp, .mul]
+			&& p.tok.line_nr != p.prev_tok.line_nr) {
 			// continue on infix expr
 			node = p.infix_expr(node)
 			// return early `if bar is SumType as b {`
@@ -450,7 +468,7 @@ pub fn (mut p Parser) expr_with_left(left ast.Expr, precedence int, is_stmt_iden
 			if p.peek_tok.kind in [.rpar, .rsbr] {
 				if !p.inside_ct_if_expr {
 					p.warn_with_pos('`$p.tok.kind` operator can only be used as a statement',
-						p.peek_tok.pos())
+						p.tok.pos())
 				}
 			}
 			if p.tok.kind in [.inc, .dec] && p.prev_tok.line_nr != p.tok.line_nr {
@@ -460,10 +478,15 @@ pub fn (mut p Parser) expr_with_left(left ast.Expr, precedence int, is_stmt_iden
 			if mut node is ast.IndexExpr {
 				node.recursive_mapset_is_setter(true)
 			}
+			is_c2v_prefix := p.peek_tok.kind == .dollar
 			node = ast.PostfixExpr{
 				op: p.tok.kind
 				expr: node
 				pos: p.tok.pos()
+				is_c2v_prefix: is_c2v_prefix
+			}
+			if is_c2v_prefix {
+				p.next()
 			}
 			p.next()
 			// return node // TODO bring back, only allow ++/-- in exprs in translated code
@@ -483,6 +506,9 @@ fn (mut p Parser) infix_expr(left ast.Expr) ast.Expr {
 	precedence := p.tok.precedence()
 	mut pos := p.tok.pos()
 	p.next()
+	if p.inside_if_cond {
+		p.if_cond_comments << p.eat_comments()
+	}
 	mut right := ast.empty_expr()
 	prev_expecting_type := p.expecting_type
 	if op in [.key_is, .not_is] {
@@ -528,7 +554,7 @@ fn (mut p Parser) infix_expr(left ast.Expr) ast.Expr {
 		}
 		if p.tok.kind == .question {
 			p.next()
-			or_kind = .propagate
+			or_kind = .propagate_option
 		}
 		p.or_is_handled = false
 	}
@@ -544,27 +570,6 @@ fn (mut p Parser) infix_expr(left ast.Expr) ast.Expr {
 			kind: or_kind
 			pos: or_pos
 		}
-	}
-}
-
-fn (mut p Parser) go_expr() ast.GoExpr {
-	p.next()
-	spos := p.tok.pos()
-	expr := p.expr(0)
-	call_expr := if expr is ast.CallExpr {
-		expr
-	} else {
-		p.error_with_pos('expression in `go` must be a function call', expr.pos())
-		ast.CallExpr{
-			scope: p.scope
-		}
-	}
-	pos := spos.extend(p.prev_tok.pos())
-	p.register_auto_import('sync.threads')
-	p.table.gostmts++
-	return ast.GoExpr{
-		call_expr: call_expr
-		pos: pos
 	}
 }
 
@@ -608,6 +613,13 @@ fn (mut p Parser) prefix_expr() ast.Expr {
 				return right
 			}
 		}
+		if mut right is ast.ParExpr {
+			if right.expr is ast.StructInit {
+				p.note_with_pos('unnecessary `()`, use `&$right.expr` instead of `&($right.expr)`',
+					right.pos)
+				right = right.expr
+			}
+		}
 	}
 	mut or_stmts := []ast.Stmt{}
 	mut or_kind := ast.OrKind.absent
@@ -634,7 +646,7 @@ fn (mut p Parser) prefix_expr() ast.Expr {
 		}
 		if p.tok.kind == .question {
 			p.next()
-			or_kind = .propagate
+			or_kind = .propagate_option
 		}
 		p.or_is_handled = false
 	}

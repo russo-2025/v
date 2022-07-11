@@ -10,7 +10,7 @@ import v.pref
 // that either contains main .v files, or a v.mod file is reached.
 // For example, given something like /languages/v/vlib/x/websocket/tests/autobahn
 // it returns `x.websocket.tests`, because /languages/v/ has v.mod file in it.
-// NB: calling this is expensive, so keep the result, instead of recomputing it.
+// Note: calling this is expensive, so keep the result, instead of recomputing it.
 // TODO: turn this to a Doc method, so that the new_vdoc_preferences call here can
 // be removed.
 fn get_parent_mod(input_dir string) ?string {
@@ -85,6 +85,6 @@ pub fn lookup_module(mod string) ?string {
 
 // generate_from_mod generates a documentation from a specific module.
 pub fn generate_from_mod(module_name string, pub_only bool, with_comments bool) ?Doc {
-	mod_path := lookup_module(module_name) ?
+	mod_path := lookup_module(module_name)?
 	return generate(mod_path, pub_only, with_comments, .auto)
 }
